@@ -15,9 +15,13 @@ Version:    0.0.1: alpha
             0.1.1: Address strange behavior of python plugin framework where no more than a couple of devices can be
                     created and updated in one pass in the same function... so devices are created in "OnStart()" as
                     required but are only updated after all required devices are created
+            0.2.0: First incremental update:
+                    - Code cleanup for calls to Domoticz API
+                    - Timeout for temperature sensors, based on Domoticz preferences setting
+
 """
 """
-<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.1.1" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
+<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.2.0" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
     <params>
         <param field="Address" label="Domoticz IP Address" width="200px" required="true" default="127.0.0.1"/>
         <param field="Port" label="Port" width="40px" required="true" default="8080"/>
@@ -59,7 +63,6 @@ class BasePlugin:
         self.pauseondelay = 2  # time between pause sensor actuation and actual pause
         self.pauseoffdelay = 1  # time between end of pause sensor actuation and end of actual pause
         self.forcedduration = 60  # time in minutes for the forced mode
-        self.update_period = 59  # time in minutes to refresh the setpoint devices so that these do not turn red
         self.InTempSensors = []
         self.OutTempSensors = []
         self.Heaters = []
@@ -217,8 +220,7 @@ class BasePlugin:
                 Domoticz.Debug("Thermostat is off")
             if updatetemps:
                 # call the Domoticz json API for a temperature devices update, to get the lastest temps...
-                self.readTemps(DomoticzAPI("/json.htm?type=devices&filter=temp&used=true&order=Name"))
-
+                self.readTemps()
 
         elif Devices[1].sValue == "20":  # Thermostat is in forced mode
             if self.forced:
@@ -235,7 +237,7 @@ class BasePlugin:
                 self.switchHeat(True)
             if updatetemps:
                 # call the Domoticz json API for a temperature devices update, to get the lastest temps...
-                self.readTemps(DomoticzAPI("/json.htm?type=devices&filter=temp&used=true&order=Name"))
+                self.readTemps()
 
         else:  # Thermostat is in mode auto
 
@@ -269,13 +271,13 @@ class BasePlugin:
                 else:
                     self.setpoint = float(Devices[5].sValue)
                 # call the Domoticz json API for a temperature devices update, to get the lastest temps...
-                self.readTemps(DomoticzAPI("/json.htm?type=devices&filter=temp&used=true&order=Name"))
+                self.readTemps()
                 # do the thermostat work
                 self.AutoMode()
 
         # check if need to refresh setpoints so that they do not turn red in GUI
         if self.nextupdate <= now:
-            self.nextupdate = now + timedelta(minutes=self.update_period)
+            self.nextupdate = now + timedelta(minutes=int(Settings["SensorTimeout"]))
             Devices[4].Update(nValue=0, sValue=Devices[4].sValue)
             Devices[5].Update(nValue=0, sValue=Devices[5].sValue)
 
@@ -357,34 +359,46 @@ class BasePlugin:
             Domoticz.Debug("Heating On")
             # switch on heater(s)
             for heater in self.Heaters:
-                DomoticzAPI("/json.htm?type=command&param=switchlight&idx={}&switchcmd=On".format(heater))
+                DomoticzAPI("type=command&param=switchlight&idx={}&switchcmd=On".format(heater))
             Domoticz.Debug("End Heat time = " + str(self.endheat))
         else:
             self.heat = False
             Domoticz.Debug("Heating Off")
             # switch off heater(s)
             for heater in self.Heaters:
-                DomoticzAPI("/json.htm?type=command&param=switchlight&idx={}&switchcmd=Off".format(heater))
+                DomoticzAPI("type=command&param=switchlight&idx={}&switchcmd=Off".format(heater))
 
 
-    def readTemps(self, devicesAPI):
+    def readTemps(self):
         # fetch all the devices from the API and scan for sensors
         listintemps = []
         listouttemps = []
-        for device in devicesAPI["result"]:  # parse the devices for temperature sensors
-            idx = int(device["idx"])
-            if idx in self.InTempSensors:
-                if "Temp" in device:
-                    Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
-                    listintemps.append(device["Temp"])
-                else:
-                    Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
-            elif idx in self.OutTempSensors:
-                if "Temp" in device:
-                    WriteLog("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]), "Verbose")
-                    listouttemps.append(device["Temp"])
-                else:
-                    Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
+        devicesAPI = DomoticzAPI("type=devices&filter=temp&used=true&order=Name")
+        if devicesAPI:
+            for device in devicesAPI["result"]:  # parse the devices for temperature sensors
+                idx = int(device["idx"])
+                if idx in self.InTempSensors:
+                    if "Temp" in device:
+                        Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
+                        # check temp sensor is not timed out
+                        if datetime.strptime(device["LastUpdate"], "%Y-%m-%d %H:%M:%S")\
+                                + timedelta(minutes=int(Settings["SensorTimeout"])) >= datetime.now():
+                            listintemps.append(device["Temp"])
+                        else:
+                            Domoticz.Error("skipping timed out temperature sensor {}".format(device["Name"]))
+                    else:
+                        Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
+                elif idx in self.OutTempSensors:
+                    if "Temp" in device:
+                        Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
+                        # check temp sensor is not timed out
+                        if datetime.strptime(device["LastUpdate"], "%Y-%m-%d %H:%M:%S")\
+                                + timedelta(minutes=int(Settings["SensorTimeout"])) >= datetime.now():
+                            listouttemps.append(device["Temp"])
+                        else:
+                            Domoticz.Error("skipping timed out temperature sensor {}".format(device["Name"]))
+                    else:
+                        Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
 
         # calculate the average inside temperature
         nbtemps = len(listintemps)
@@ -409,7 +423,7 @@ class BasePlugin:
 
 
     def getUserVar(self):
-        variables = DomoticzAPI("/json.htm?type=command&param=getuservariables")
+        variables = DomoticzAPI("type=command&param=getuservariables")
         if variables:
             # there is a valid response from the API but we do not know if our variable exists yet
             novar = True
@@ -424,7 +438,7 @@ class BasePlugin:
             if novar:
                 # create user variable since it does not exist
                 WriteLog("User Variable {} does not exist. Creation requested".format(varname), "Verbose")
-                DomoticzAPI("/json.htm?type=command&param=saveuservariable&vname={}&vtype=2&vvalue={}".format(
+                DomoticzAPI("type=command&param=saveuservariable&vname={}&vtype=2&vvalue={}".format(
                     varname, str(self.InternalsDefaults)))
                 self.Internals = self.InternalsDefaults.copy()  # we re-initialize the internal variables
             else:
@@ -440,7 +454,7 @@ class BasePlugin:
 
     def saveUserVar(self):
         varname = Parameters["Name"] + "-InternalVariables"
-        DomoticzAPI("/json.htm?type=command&param=updateuservariable&vname={}&vtype=2&vvalue={}".format(
+        DomoticzAPI("type=command&param=updateuservariable&vname={}&vtype=2&vvalue={}".format(
             varname, str(self.Internals)))
 
 
@@ -483,7 +497,7 @@ def parseCSV(strCSV):
 
 
 def WriteLog(message, level="Normal"):
-    if Parameters["Mode6"] == "Verbose":
+    if Parameters["Mode6"] == "Verbose" or Parameters["Mode6"] == "Debug":
         Domoticz.Log(message)
     elif level == "Normal":
         Domoticz.Log(message)
@@ -491,7 +505,7 @@ def WriteLog(message, level="Normal"):
 
 def DomoticzAPI(APICall):
     resultJson = None
-    url = "http://{}:{}{}".format(Parameters["Address"], Parameters["Port"], parse.quote(APICall, safe="/&=?"))
+    url = "http://{}:{}/json.htm?{}".format(Parameters["Address"], Parameters["Port"], parse.quote(APICall, safe="&="))
     try:
         response = request.urlopen(url)
         if response.status == 200:
@@ -503,7 +517,6 @@ def DomoticzAPI(APICall):
             Domoticz.Error("Domoticz API: http error = {}".format(response.status))
     except:
         Domoticz.Error("Error calling '{}'".format(url))
-        return ""
     return resultJson
 
 
