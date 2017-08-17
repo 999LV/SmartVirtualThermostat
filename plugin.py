@@ -18,10 +18,12 @@ Version:    0.0.1: alpha
             0.2.0: First incremental update:
                     - Code cleanup for calls to Domoticz API
                     - Timeout for temperature sensors, based on Domoticz preferences setting
-
+            0.2.1: Fixed possible TypeError in datetime.strptime method in embedded Python
+                    (known python 3.x bug, see https://bugs.python.org/issue27400)
+            0.3.0: Fixed major bug in auto-learning + cosmetic improvements
 """
 """
-<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.2.0" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
+<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.3.0" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
     <params>
         <param field="Address" label="Domoticz IP Address" width="200px" required="true" default="127.0.0.1"/>
         <param field="Port" label="Port" width="40px" required="true" default="8080"/>
@@ -44,6 +46,7 @@ import json
 import urllib.parse as parse
 import urllib.request as request
 from datetime import datetime, timedelta
+import time
 
 class deviceparam:
 
@@ -300,7 +303,7 @@ class BasePlugin:
             if (power > 0) and (power <= self.minheattime):
                 power = 0  # Seuil mini de power
             heatduration = round(power * self.calculate_period / 100)
-            Domoticz.Debug("Calculation: Power = {} -> heat duration = {}".format(power, heatduration))
+            WriteLog("Calculation: Power = {} -> heat duration = {} minutes".format(power, heatduration), "Verbose")
             if power == 0:
                 self.switchHeat(False)
                 Domoticz.Debug("No heating required !")
@@ -334,7 +337,8 @@ class BasePlugin:
             # learning ConstC
             ConstC = (self.Internals['ConstC'] * ((self.Internals['LastSetPoint'] - self.Internals['LastInT']) /
                                                   (self.intemp - self.Internals['LastInT']) *
-                                                  ((now - self.lastcalc) / timedelta(minutes=self.calculate_period))))
+                                                  (timedelta.total_seconds(now - self.lastcalc) /
+                                                   (self.calculate_period * 60))))
             WriteLog("New calc for ConstC = {}".format(ConstC), "Verbose")
             self.Internals['ConstC'] = round((self.Internals['ConstC'] * self.Internals['nbCC'] + ConstC) /
                                              (self.Internals['nbCC'] + 1), 1)
@@ -345,7 +349,8 @@ class BasePlugin:
             ConstT = (self.Internals['ConstT'] + ((self.Internals['LastSetPoint'] - self.intemp) /
                                                   (self.Internals['LastSetPoint'] - self.Internals['LastOutT']) *
                                                   self.Internals['ConstC'] *
-                                                  ((now - self.lastcalc) / timedelta(minutes=self.calculate_period))))
+                                                  (timedelta.total_seconds(now - self.lastcalc) /
+                                                   (self.calculate_period * 60))))
             WriteLog("New calc for ConstT = {}".format(ConstT), "Verbose")
             self.Internals['ConstT'] = round((self.Internals['ConstT'] * self.Internals['nbCT'] + ConstT) /
                                              (self.Internals['nbCT'] + 1), 1)
@@ -381,8 +386,7 @@ class BasePlugin:
                     if "Temp" in device:
                         Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
                         # check temp sensor is not timed out
-                        if datetime.strptime(device["LastUpdate"], "%Y-%m-%d %H:%M:%S")\
-                                + timedelta(minutes=int(Settings["SensorTimeout"])) >= datetime.now():
+                        if not SensorTimedOut(device["LastUpdate"]):
                             listintemps.append(device["Temp"])
                         else:
                             Domoticz.Error("skipping timed out temperature sensor {}".format(device["Name"]))
@@ -392,8 +396,7 @@ class BasePlugin:
                     if "Temp" in device:
                         Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
                         # check temp sensor is not timed out
-                        if datetime.strptime(device["LastUpdate"], "%Y-%m-%d %H:%M:%S")\
-                                + timedelta(minutes=int(Settings["SensorTimeout"])) >= datetime.now():
+                        if not SensorTimedOut(device["LastUpdate"]):
                             listouttemps.append(device["Temp"])
                         else:
                             Domoticz.Error("skipping timed out temperature sensor {}".format(device["Name"]))
@@ -482,7 +485,18 @@ def onHeartbeat():
     _plugin.onHeartbeat()
 
 
-# Plugin specific functions ---------------------------------------------------
+# Plugin utility functions ---------------------------------------------------
+
+def SensorTimedOut(datestring):
+    def LastUpdate(datestring):
+        dateformat = "%Y-%m-%d %H:%M:%S"
+        # the below try/except is meant to address an intermittent python bug in some embedded systems
+        try:
+            result = datetime.strptime(datestring, dateformat)
+        except TypeError:
+            result = datetime(*(time.strptime(datestring, dateformat)[0:6]))
+        return result
+    return LastUpdate(datestring) + timedelta(minutes=int(Settings["SensorTimeout"])) < datetime.now()
 
 def parseCSV(strCSV):
     listvals = []
