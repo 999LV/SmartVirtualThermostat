@@ -21,9 +21,10 @@ Version:    0.0.1: alpha
             0.2.1: Fixed possible TypeError in datetime.strptime method in embedded Python
                     (known python 3.x bug, see https://bugs.python.org/issue27400)
             0.3.0: Fixed major bug in auto-learning + cosmetic improvements
+            0.3.1: Force immediate recalculation when setpoint changes
 """
 """
-<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.3.0" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
+<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.3.1" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
     <params>
         <param field="Address" label="Domoticz IP Address" width="200px" required="true" default="127.0.0.1"/>
         <param field="Port" label="Port" width="40px" required="true" default="8080"/>
@@ -193,7 +194,7 @@ class BasePlugin:
                 nvalue = 0
             svalue = str(Level)
         Devices[Unit].Update(nValue=nvalue, sValue=svalue)
-        if Unit == 1:
+        if Unit in (1, 4, 5): # force recalculation if mode or a setpoint changed
             self.nextcalc = datetime.now()
             self.onHeartbeat()
 
