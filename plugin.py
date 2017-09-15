@@ -22,9 +22,10 @@ Version:    0.0.1: alpha
                     (known python 3.x bug, see https://bugs.python.org/issue27400)
             0.3.0: Fixed major bug in auto-learning + cosmetic improvements
             0.3.1: Force immediate recalculation when setpoint changes
+            0.3.2: fix bug where thermostat might still switch on despite no valid inside temperature
 """
 """
-<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.3.1" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
+<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.3.2" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
     <params>
         <param field="Address" label="Domoticz IP Address" width="200px" required="true" default="127.0.0.1"/>
         <param field="Port" label="Port" width="40px" required="true" default="8080"/>
@@ -408,9 +409,11 @@ class BasePlugin:
         nbtemps = len(listintemps)
         if nbtemps > 0:
             self.intemp = round(sum(listintemps) / nbtemps, 1)
+            Devices[6].Update(nValue=0,
+                              sValue=str(self.intemp))  # update the dummy device showing the current thermostat temp
         else:
             Domoticz.Error("No Inside Temperature found... Switching Thermostat Off")
-            Devices[1].Update(nValue=0, sValue="")  # switch off the thermostat
+            Devices[1].Update(nValue=0, sValue="0")  # switch off the thermostat
 
         # calculate the average outside temperature
         nbtemps = len(listouttemps)
@@ -422,8 +425,6 @@ class BasePlugin:
 
         WriteLog("Inside Temperature = {}".format(self.intemp), "Verbose")
         WriteLog("Outside Temperature = {}".format(self.outtemp), "Verbose")
-        Devices[6].Update(nValue=0,
-                          sValue=str(self.intemp))  # update the dummy device showing the current themostat temp
 
 
     def getUserVar(self):
