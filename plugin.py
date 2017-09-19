@@ -23,9 +23,13 @@ Version:    0.0.1: alpha
             0.3.0: Fixed major bug in auto-learning + cosmetic improvements
             0.3.1: Force immediate recalculation when setpoint changes
             0.3.2: fix bug where thermostat might still switch on despite no valid inside temperature
+            0.3.3: various improvements:
+                    - end of heating cycle code adjusted to avoid potentially damaging quick off/on to the heater(s)
+                    - fix start up sequence to kill heating if mode is off in case heating was manually on beforehand
+                    - ensure heating is killed if invalid temperature reading (v.s. just setting mode to off)
 """
 """
-<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.3.2" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
+<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.3.3" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
     <params>
         <param field="Address" label="Domoticz IP Address" width="200px" required="true" default="127.0.0.1"/>
         <param field="Port" label="Port" width="40px" required="true" default="8080"/>
@@ -124,27 +128,21 @@ class BasePlugin:
                        "SelectorStyle": "0"}
             Domoticz.Device(Name="Thermostat Mode", Unit=2, TypeName="Selector Switch", Switchtype=18, Image=15,
                             Options=Options, Used=1).Create()
-            #Devices[2].Update(nValue=0, sValue="10")  # default is normal mode
             devicecreated.append(deviceparam(2, 0, "10"))  # default is normal mode
         if 3 not in Devices:
             Domoticz.Device(Name="Thermostat Pause", Unit=3, TypeName="Switch", Image=9, Used=1).Create()
-            #Devices[3].Update(nValue=0, sValue="")  # default is Off
             devicecreated.append(deviceparam(3, 0, ""))  # default is Off
         if 4 not in Devices:
             Domoticz.Device(Name="Setpoint Normal", Unit=4, Type=242, Subtype=1, Used=1).Create()
-            #Devices[4].Update(nValue=0, sValue="20")  # default is 20 degrees
             devicecreated.append(deviceparam(4, 0, "20"))  # default is 20 degrees
         if 5 not in Devices:
             Domoticz.Device(Name="Setpoint Economy", Unit=5, Type=242, Subtype=1, Used=1).Create()
-            #Devices[5].Update(nValue=0, sValue="20")  # default is 20 degrees
             devicecreated.append(deviceparam(5 ,0, "20"))  # default is 20 degrees
         if 6 not in Devices:
             Domoticz.Device(Name="Thermostat temp", Unit=6, TypeName="Temperature").Create()
-            #Devices[6].Update(nValue=0, sValue="20")  # default is 20 degrees
             devicecreated.append(deviceparam(6, 0, "20"))  # default is 20 degrees
 
         # if any device has been created in onStart(), now is time to update its defaults
-        # since doing so creates an error if more than two devices are created and updated at once
         for device in devicecreated:
             Devices[device.unit].Update(nValue=device.nvalue, sValue=device.svalue)
 
@@ -171,6 +169,10 @@ class BasePlugin:
         # note: to reset the thermostat to default values (i.e. ignore all past learning),
         # just delete the relevant "<plugin name>-InternalVariables" user variable Domoticz GUI and restart plugin
         self.getUserVar()
+
+        # if mode = off then make sure actual heating is off just in case if was manually set to on
+        if Devices[1].sValue == "0":
+            self.switchHeat(False)
 
 
     def onStop(self):
@@ -212,17 +214,11 @@ class BasePlugin:
             updatetemps = False
 
         if Devices[1].sValue == "0":  # Thermostat is off
-            if self.forced:  # thermostat setting was just changed from "forced" so we kill the forced mode
+            if self.forced or self.heat:  # thermostat setting was just changed so we kill the heating
                 self.forced = False
-                self.endheat = now
-                Domoticz.Debug("Forced mode Off !")
-                self.switchHeat(False)
-            elif self.heat:
                 self.endheat = now
                 Domoticz.Debug("Switching heat Off !")
                 self.switchHeat(False)
-            else:
-                Domoticz.Debug("Thermostat is off")
             if updatetemps:
                 # call the Domoticz json API for a temperature devices update, to get the lastest temps...
                 self.readTemps()
@@ -255,7 +251,12 @@ class BasePlugin:
 
             elif (self.endheat <= now or self.pause) and self.heat:  # heat cycle is over
                 self.endheat = now
-                self.switchHeat(False)
+                self.heat = False
+                if self.Internals['LastPwr'] < 100:
+                    self.switchHeat(False)
+                # if power was 100(i.e. a full cycle), then we let the next calculation (at next heartbeat) decide
+                # to switch off in order to avoid potentially damaging quick off/on cycles to the heater(s)
+                self.readTemps()  # update the temps at the end of the heating cycle for better logging
 
             elif self.pause and not self.pauserequested:  # we are in pause and the pause switch is now off
                 if self.pauserequestchangedtime + timedelta(minutes=self.pauseoffdelay) <= now:
@@ -276,9 +277,12 @@ class BasePlugin:
                 else:
                     self.setpoint = float(Devices[5].sValue)
                 # call the Domoticz json API for a temperature devices update, to get the lastest temps...
-                self.readTemps()
-                # do the thermostat work
-                self.AutoMode()
+                if self.readTemps():
+                    # do the thermostat work
+                    self.AutoMode()
+                else:
+                    # make sure we switch off heating if there was an error with reading the temp
+                    self.switchHeat(False)
 
         # check if need to refresh setpoints so that they do not turn red in GUI
         if self.nextupdate <= now:
@@ -378,6 +382,7 @@ class BasePlugin:
 
     def readTemps(self):
         # fetch all the devices from the API and scan for sensors
+        noerror = True
         listintemps = []
         listouttemps = []
         devicesAPI = DomoticzAPI("type=devices&filter=temp&used=true&order=Name")
@@ -414,6 +419,7 @@ class BasePlugin:
         else:
             Domoticz.Error("No Inside Temperature found... Switching Thermostat Off")
             Devices[1].Update(nValue=0, sValue="0")  # switch off the thermostat
+            noerror = False
 
         # calculate the average outside temperature
         nbtemps = len(listouttemps)
@@ -425,6 +431,7 @@ class BasePlugin:
 
         WriteLog("Inside Temperature = {}".format(self.intemp), "Verbose")
         WriteLog("Outside Temperature = {}".format(self.outtemp), "Verbose")
+        return noerror
 
 
     def getUserVar(self):
