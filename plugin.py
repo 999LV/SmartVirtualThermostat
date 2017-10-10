@@ -27,9 +27,11 @@ Version:    0.0.1: alpha
                     - end of heating cycle code adjusted to avoid potentially damaging quick off/on to the heater(s)
                     - fix start up sequence to kill heating if mode is off in case heating was manually on beforehand
                     - ensure heating is killed if invalid temperature reading (v.s. just setting mode to off)
+            0.3.4: immediate recalculation if mode changed (and skip learning since incomplete cycle).
+                    Thanks to domoticz forum user @Electrocut
 """
 """
-<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.3.3" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
+<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.3.4" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
     <params>
         <param field="Address" label="Domoticz IP Address" width="200px" required="true" default="127.0.0.1"/>
         <param field="Port" label="Port" width="40px" required="true" default="8080"/>
@@ -99,6 +101,7 @@ class BasePlugin:
         self.lastcalc = self.endheat
         self.nextupdate = self.endheat
         self.nexttemps = self.endheat
+        self.learn = True
         return
 
 
@@ -197,8 +200,9 @@ class BasePlugin:
                 nvalue = 0
             svalue = str(Level)
         Devices[Unit].Update(nValue=nvalue, sValue=svalue)
-        if Unit in (1, 4, 5): # force recalculation if mode or a setpoint changed
+        if Unit in (1, 2, 4, 5): # force recalculation if control or mode or a setpoint changed
             self.nextcalc = datetime.now()
+            self.learn = False
             self.onHeartbeat()
 
 
@@ -296,7 +300,10 @@ class BasePlugin:
             Domoticz.Debug("Temperature exceeds setpoint: no heating")
             self.switchHeat(False)
         else:
-            self.AutoCallib()
+            if self.learn:
+                self.AutoCallib()
+            else:
+                self.learn = True
             if self.outtemp is None:
                 power = round((self.setpoint - self.intemp) * self.Internals["ConstC"], 1)
             else:
