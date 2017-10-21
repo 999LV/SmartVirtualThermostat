@@ -29,9 +29,11 @@ Version:    0.0.1: alpha
                     - ensure heating is killed if invalid temperature reading (v.s. just setting mode to off)
             0.3.4: immediate recalculation if mode changed (and skip learning since incomplete cycle).
                     Thanks to domoticz forum user @Electrocut
+            0.3.5: fixed bug if calculated power is below minimum power
+                    Thanks to domoticz forum user @napo7
 """
 """
-<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.3.4" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
+<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.3.5" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
     <params>
         <param field="Address" label="Domoticz IP Address" width="200px" required="true" default="127.0.0.1"/>
         <param field="Port" label="Port" width="40px" required="true" default="8080"/>
@@ -69,7 +71,7 @@ class BasePlugin:
     def __init__(self):
         self.debug = False
         self.calculate_period = 30  # Time in minutes between two calculations (cycle)
-        self.minheattime = 0  # if heating is needed, minimum time of heating in % of cycle
+        self.minheatpower = 0  # if heating is needed, minimum heat power (in % of calculation period)
         self.deltamax = 0.2  # allowed temp excess over setpoint temperature
         self.pauseondelay = 2  # time between pause sensor actuation and actual pause
         self.pauseoffdelay = 1  # time between end of pause sensor actuation and end of actual pause
@@ -161,7 +163,7 @@ class BasePlugin:
         params = parseCSV(Parameters["Mode5"])
         if len(params) == 5:
             self.calculate_period = params[0]
-            self.minheattime = params[1]
+            self.minheatpower = params[1]
             self.pauseondelay = params[2]
             self.pauseoffdelay = params[3]
             self.forcedduration = params[4]
@@ -313,8 +315,8 @@ class BasePlugin:
                 power = 0  # Limite basse
             if power > 100:
                 power = 100  # Limite haute
-            if (power > 0) and (power <= self.minheattime):
-                power = 0  # Seuil mini de power
+            if (power > 0) and (power <= self.minheatpower):
+                power = self.minheatpower  # Seuil mini de power
             heatduration = round(power * self.calculate_period / 100)
             WriteLog("Calculation: Power = {} -> heat duration = {} minutes".format(power, heatduration), "Verbose")
             if power == 0:
