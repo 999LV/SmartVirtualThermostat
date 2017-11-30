@@ -31,9 +31,11 @@ Version:    0.0.1: alpha
                     Thanks to domoticz forum user @Electrocut
             0.3.5: fixed bug if calculated power is below minimum power
                     Thanks to domoticz forum user @napo7
+            0.3.6: fixed bug causing auto learning to fail if no outside temp is provided
+                    Thanks to domoticz forim user @etampes
 """
 """
-<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.3.5" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
+<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.3.6" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
     <params>
         <param field="Address" label="Domoticz IP Address" width="200px" required="true" default="127.0.0.1"/>
         <param field="Port" label="Port" width="40px" required="true" default="8080"/>
@@ -359,7 +361,7 @@ class BasePlugin:
                                              (self.Internals['nbCC'] + 1), 1)
             self.Internals['nbCC'] = min(self.Internals['nbCC'] + 1, 50)
             WriteLog("ConstC updated to {}".format(self.Internals['ConstC']), "Verbose")
-        elif self.Internals['LastSetPoint'] > self.Internals['LastOutT']:
+        elif self.outtemp is not None and self.Internals['LastSetPoint'] > self.Internals['LastOutT']:
             # learning ConstT
             ConstT = (self.Internals['ConstT'] + ((self.Internals['LastSetPoint'] - self.intemp) /
                                                   (self.Internals['LastSetPoint'] - self.Internals['LastOutT']) *
