@@ -32,10 +32,14 @@ Version:    0.0.1: alpha
             0.3.5: fixed bug if calculated power is below minimum power
                     Thanks to domoticz forum user @napo7
             0.3.6: fixed bug causing auto learning to fail if no outside temp is provided
-                    Thanks to domoticz forim user @etampes
+                    Thanks to domoticz forum user @etampes
+            0.3.7: changed the logic for minimum power: apply minimum power even if no heating needed (useful for
+                    very high thermal inertia systems like heating floors that work better if kept warm enough)
+                    Thanks to domoticz forum user @napo7
+            0.3.8: minor improvements to thermostat temperature update logic, some code cleanup
 """
 """
-<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.3.6" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
+<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.3.8" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
     <params>
         <param field="Address" label="Domoticz IP Address" width="200px" required="true" default="127.0.0.1"/>
         <param field="Port" label="Port" width="40px" required="true" default="8080"/>
@@ -165,10 +169,19 @@ class BasePlugin:
         params = parseCSV(Parameters["Mode5"])
         if len(params) == 5:
             self.calculate_period = params[0]
+            if self.calculate_period < 5:
+                Domoticz.Error("Invalid calculation period parameter. Using minimum of 5 minutes !")
+                self.calculate_period = 5
             self.minheatpower = params[1]
+            if self.minheatpower > 100:
+                Domoticz.Error("Invalid minimum heating parameter. Using maximum of 100% !")
+                self.minheatpower = 100
             self.pauseondelay = params[2]
             self.pauseoffdelay = params[3]
             self.forcedduration = params[4]
+            if self.forcedduration < 30:
+                Domoticz.Error("Invalid forced mode duration parameter. Using minimum of 30 minutes !")
+                self.calculate_period = 30
         else:
             Domoticz.Error("Error reading Mode5 parameters")
 
@@ -213,13 +226,6 @@ class BasePlugin:
     def onHeartbeat(self):
 
         now = datetime.now()
-        # counter to update the temps in modes Off and Forced (in Auto mode, this is not needed nor used)
-        if self.nexttemps <= now:
-            self.nexttemps = now + timedelta(minutes=self.calculate_period)
-            Domoticz.Debug("Thermostat temperature update called")
-            updatetemps = True
-        else:
-            updatetemps = False
 
         if Devices[1].sValue == "0":  # Thermostat is off
             if self.forced or self.heat:  # thermostat setting was just changed so we kill the heating
@@ -227,7 +233,8 @@ class BasePlugin:
                 self.endheat = now
                 Domoticz.Debug("Switching heat Off !")
                 self.switchHeat(False)
-            if updatetemps:
+
+            if self.nexttemps <= now:
                 # call the Domoticz json API for a temperature devices update, to get the lastest temps...
                 self.readTemps()
 
@@ -244,7 +251,8 @@ class BasePlugin:
                 self.endheat = now + timedelta(minutes=self.forcedduration)
                 Domoticz.Debug("Forced mode On !")
                 self.switchHeat(True)
-            if updatetemps:
+
+            if self.nexttemps <= now:
                 # call the Domoticz json API for a temperature devices update, to get the lastest temps...
                 self.readTemps()
 
@@ -253,7 +261,7 @@ class BasePlugin:
             if self.forced:  # thermostat setting was just changed from "forced" so we kill the forced mode
                 self.forced = False
                 self.endheat = now
-                self.nextcalc = now + timedelta(minutes=self.calculate_period)
+                self.nextcalc = now   # this will force a recalculation on next heartbeat
                 Domoticz.Debug("Forced mode Off !")
                 self.switchHeat(False)
 
@@ -264,7 +272,6 @@ class BasePlugin:
                     self.switchHeat(False)
                 # if power was 100(i.e. a full cycle), then we let the next calculation (at next heartbeat) decide
                 # to switch off in order to avoid potentially damaging quick off/on cycles to the heater(s)
-                self.readTemps()  # update the temps at the end of the heating cycle for better logging
 
             elif self.pause and not self.pauserequested:  # we are in pause and the pause switch is now off
                 if self.pauserequestchangedtime + timedelta(minutes=self.pauseoffdelay) <= now:
@@ -277,13 +284,20 @@ class BasePlugin:
                     self.pause = True
                     self.switchHeat(False)
 
+            elif self.pause and self.nexttemps <= now:  # added to update thermostat temp even in pause mode
+                # call the Domoticz json API for a temperature devices update, to get the lastest temps...
+                self.readTemps()
+
             elif (self.nextcalc <= now) and not self.pause:  # we start a new calculation
                 self.nextcalc = now + timedelta(minutes=self.calculate_period)
                 Domoticz.Debug("Next calculation time will be : " + str(self.nextcalc))
-                if Devices[2].sValue == "10":  # make setpoint reflect the select mode (10= normal, 20 = economy)
+
+                # make current setpoint used in calculation reflect the select mode (10= normal, 20 = economy)
+                if Devices[2].sValue == "10":
                     self.setpoint = float(Devices[4].sValue)
                 else:
                     self.setpoint = float(Devices[5].sValue)
+
                 # call the Domoticz json API for a temperature devices update, to get the lastest temps...
                 if self.readTemps():
                     # do the thermostat work
@@ -302,7 +316,7 @@ class BasePlugin:
     def AutoMode(self):
         if self.intemp > self.setpoint + self.deltamax:
             Domoticz.Debug("Temperature exceeds setpoint: no heating")
-            self.switchHeat(False)
+            power = 0
         else:
             if self.learn:
                 self.AutoCallib()
@@ -313,28 +327,32 @@ class BasePlugin:
             else:
                 power = round((self.setpoint - self.intemp) * self.Internals["ConstC"] +
                               (self.setpoint - self.outtemp) * self.Internals["ConstT"], 1)
-            if power < 0:
-                power = 0  # Limite basse
-            if power > 100:
-                power = 100  # Limite haute
-            if (power > 0) and (power <= self.minheatpower):
-                power = self.minheatpower  # Seuil mini de power
-            heatduration = round(power * self.calculate_period / 100)
-            WriteLog("Calculation: Power = {} -> heat duration = {} minutes".format(power, heatduration), "Verbose")
-            if power == 0:
-                self.switchHeat(False)
-                Domoticz.Debug("No heating required !")
-            else:
-                self.endheat = datetime.now() + timedelta(minutes=heatduration)
-                Domoticz.Debug("End Heat time = " + str(self.endheat))
-                self.switchHeat(True)
-                if self.Internals["ALStatus"] < 2:
-                    self.Internals['LastPwr'] = power
-                    self.Internals['LastInT'] = self.intemp
-                    self.Internals['LastOutT'] = self.outtemp
-                    self.Internals['LastSetPoint'] = self.setpoint
-                    self.Internals['ALStatus'] = 1
-                    self.saveUserVar()  # update user variables with latest learning
+
+        if power < 0:
+            power = 0  # lower limit
+        elif power > 100:
+            power = 100  # upper limit
+        if power <= self.minheatpower:
+            power = self.minheatpower  # minimum heating per cycle in % of cycle time
+
+        heatduration = round(power * self.calculate_period / 100)
+        WriteLog("Calculation: Power = {} -> heat duration = {} minutes".format(power, heatduration), "Verbose")
+
+        if power == 0:
+            self.switchHeat(False)
+            Domoticz.Debug("No heating required !")
+        else:
+            self.endheat = datetime.now() + timedelta(minutes=heatduration)
+            Domoticz.Debug("End Heat time = " + str(self.endheat))
+            self.switchHeat(True)
+            if self.Internals["ALStatus"] < 2:
+                self.Internals['LastPwr'] = power
+                self.Internals['LastInT'] = self.intemp
+                self.Internals['LastOutT'] = self.outtemp
+                self.Internals['LastSetPoint'] = self.setpoint
+                self.Internals['ALStatus'] = 1
+                self.saveUserVar()  # update user variables with latest learning
+
         self.lastcalc = datetime.now()
 
 
@@ -392,6 +410,9 @@ class BasePlugin:
 
 
     def readTemps(self):
+        # set update flag for next temp update (used only when in off, forced mode or pause is active)
+        self.nexttemps = datetime.now() + timedelta(minutes=self.calculate_period)
+
         # fetch all the devices from the API and scan for sensors
         noerror = True
         listintemps = []
