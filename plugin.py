@@ -37,9 +37,11 @@ Version:    0.0.1: alpha
                     very high thermal inertia systems like heating floors that work better if kept warm enough)
                     Thanks to domoticz forum user @napo7
             0.3.8: minor improvements to thermostat temperature update logic, some code cleanup
+            0.4.0: Stability upgrade: Drop use of urllib.request that can cause Domoticz to crash in some
+                    configurations. Plugin now again uses the Domoticz python built in http transport
 """
 """
-<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.3.8" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
+<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.0" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
     <params>
         <param field="Address" label="Domoticz IP Address" width="200px" required="true" default="127.0.0.1"/>
         <param field="Port" label="Port" width="40px" required="true" default="8080"/>
@@ -59,10 +61,11 @@ Version:    0.0.1: alpha
 """
 import Domoticz
 import json
-import urllib.parse as parse
-import urllib.request as request
+from urllib import parse
 from datetime import datetime, timedelta
 import time
+import collections
+
 
 class deviceparam:
 
@@ -110,6 +113,7 @@ class BasePlugin:
         self.nextupdate = self.endheat
         self.nexttemps = self.endheat
         self.learn = True
+        self.APICallsQueue = collections.deque()
         return
 
 
@@ -120,6 +124,10 @@ class BasePlugin:
             DumpConfigToLog()
         else:
             Domoticz.Debugging(0)
+
+        self.APIConnection = Domoticz.Connection(
+            Name="RegisterAPICall", Transport="TCP/IP", Protocol="HTTP",
+            Address=Parameters["Address"], Port=Parameters["Port"])
 
         # create the child devices if these do not exist yet
         devicecreated = []
@@ -199,6 +207,51 @@ class BasePlugin:
         Domoticz.Debugging(0)
 
 
+    def onConnect(self, Connection, Status, Description):
+        Domoticz.Debug("onConnect called")
+        if Status == 0:
+            self.ProcessAPICalls()
+        else:
+            Domoticz.Error("Failed to connect ({}) to: {}: with error: ".format(
+                Status, Parameters["Address"], Parameters["Port"], Description))
+
+
+    def onDisconnect(self, Connection):
+        Domoticz.Debug("onDisconnect called for connection to: " + Connection.Address + ":" + Connection.Port)
+
+
+    def onMessage(self, Connection, Data):
+        Domoticz.Debug("onMessage called")
+        strData = Data["Data"].decode("utf-8", "ignore")
+        Status = int(Data["Status"])
+        Domoticz.Debug("HTTP Status = {}".format(Status))
+        if Status == 200:
+            Response = json.loads(strData)
+            Domoticz.Debug("Received Domoticz API response for {}".format(Response["title"]))
+            if Response["status"] == "OK" and "title" in Response:
+                if Response["title"] == "Devices": # we process a request to poll the temperature sensors
+                    self.ProcessTemps(Response)
+                    if Devices[1].sValue == "10": # we are in auto mode, so do the thermostat work
+                        self.AutoMode()
+                elif Response["title"] == "SwitchLight": # we turned on or off a switch...
+                    pass
+                elif Response["title"] == "GetUserVariables":
+                    self.getUserVar(Response)
+                elif Response["title"] == "SaveUserVariable":
+                    WriteLog(
+                        "User Variable {}-InternalVariables created".format(Parameters["Name"]))
+                elif Response["title"] == "UpdateUserVariable":
+                    WriteLog(
+                        "User Variable {}-InternalVariables updated".format(Parameters["Name"]), "Verbose")
+                else:
+                    Domoticz.Error("Unknown Domoticz API response {}".format(Response["title"]))
+            else:
+                Domoticz.Error("Domoticz API returned an error")
+        else:
+            Domoticz.Error("Domoticz HTTP connection error ".format(Status))
+        return True
+
+
     def onCommand(self, Unit, Command, Level, Hue):
         Domoticz.Debug("onCommand called for Unit {}: Command '{}', Level: {}".format(Unit, Command, Level))
         if Unit == 3:
@@ -224,8 +277,14 @@ class BasePlugin:
 
 
     def onHeartbeat(self):
-
         now = datetime.now()
+
+        # process any pending API calls
+        if len(self.APICallsQueue) > 0:
+            if self.APIConnection.Connected():
+                self.ProcessAPICalls()
+            else:
+                self.APIConnection.Connect()
 
         if Devices[1].sValue == "0":  # Thermostat is off
             if self.forced or self.heat:  # thermostat setting was just changed so we kill the heating
@@ -299,12 +358,7 @@ class BasePlugin:
                     self.setpoint = float(Devices[5].sValue)
 
                 # call the Domoticz json API for a temperature devices update, to get the lastest temps...
-                if self.readTemps():
-                    # do the thermostat work
-                    self.AutoMode()
-                else:
-                    # make sure we switch off heating if there was an error with reading the temp
-                    self.switchHeat(False)
+                self.readTemps()
 
         # check if need to refresh setpoints so that they do not turn red in GUI
         if self.nextupdate <= now:
@@ -399,48 +453,49 @@ class BasePlugin:
             Domoticz.Debug("Heating On")
             # switch on heater(s)
             for heater in self.Heaters:
-                DomoticzAPI("type=command&param=switchlight&idx={}&switchcmd=On".format(heater))
+                self.RegisterAPICall("/json.htm?type=command&param=switchlight&idx={}&switchcmd=On".format(heater))
             Domoticz.Debug("End Heat time = " + str(self.endheat))
         else:
             self.heat = False
             Domoticz.Debug("Heating Off")
             # switch off heater(s)
             for heater in self.Heaters:
-                DomoticzAPI("type=command&param=switchlight&idx={}&switchcmd=Off".format(heater))
+                self.RegisterAPICall("/json.htm?type=command&param=switchlight&idx={}&switchcmd=Off".format(heater))
 
 
     def readTemps(self):
         # set update flag for next temp update (used only when in off, forced mode or pause is active)
         self.nexttemps = datetime.now() + timedelta(minutes=self.calculate_period)
+        self.RegisterAPICall("/json.htm?type=devices&filter=temp&used=true&order=Name")
 
+
+    def ProcessTemps(self, devicesAPI):
         # fetch all the devices from the API and scan for sensors
-        noerror = True
         listintemps = []
         listouttemps = []
-        devicesAPI = DomoticzAPI("type=devices&filter=temp&used=true&order=Name")
-        if devicesAPI:
-            for device in devicesAPI["result"]:  # parse the devices for temperature sensors
-                idx = int(device["idx"])
-                if idx in self.InTempSensors:
-                    if "Temp" in device:
-                        Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
-                        # check temp sensor is not timed out
-                        if not SensorTimedOut(device["LastUpdate"]):
-                            listintemps.append(device["Temp"])
-                        else:
-                            Domoticz.Error("skipping timed out temperature sensor {}".format(device["Name"]))
+        for device in devicesAPI["result"]:  # parse the devices for temperature sensors
+            idx = int(device["idx"])
+            Domoticz.Debug("Processing Device idx {}".format(idx))
+            if idx in self.InTempSensors:
+                if "Temp" in device:
+                    Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
+                    # check temp sensor is not timed out
+                    if not SensorTimedOut(device["LastUpdate"]):
+                        listintemps.append(device["Temp"])
                     else:
-                        Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
-                elif idx in self.OutTempSensors:
-                    if "Temp" in device:
-                        Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
-                        # check temp sensor is not timed out
-                        if not SensorTimedOut(device["LastUpdate"]):
-                            listouttemps.append(device["Temp"])
-                        else:
-                            Domoticz.Error("skipping timed out temperature sensor {}".format(device["Name"]))
+                        Domoticz.Error("skipping timed out temperature sensor {}".format(device["Name"]))
+                else:
+                    Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
+            elif idx in self.OutTempSensors:
+                if "Temp" in device:
+                    Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
+                    # check temp sensor is not timed out
+                    if not SensorTimedOut(device["LastUpdate"]):
+                        listouttemps.append(device["Temp"])
                     else:
-                        Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
+                        Domoticz.Error("skipping timed out temperature sensor {}".format(device["Name"]))
+                else:
+                    Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
 
         # calculate the average inside temperature
         nbtemps = len(listintemps)
@@ -451,7 +506,6 @@ class BasePlugin:
         else:
             Domoticz.Error("No Inside Temperature found... Switching Thermostat Off")
             Devices[1].Update(nValue=0, sValue="0")  # switch off the thermostat
-            noerror = False
 
         # calculate the average outside temperature
         nbtemps = len(listouttemps)
@@ -463,18 +517,17 @@ class BasePlugin:
 
         WriteLog("Inside Temperature = {}".format(self.intemp), "Verbose")
         WriteLog("Outside Temperature = {}".format(self.outtemp), "Verbose")
-        return noerror
 
 
-    def getUserVar(self):
-        variables = DomoticzAPI("type=command&param=getuservariables")
-        if variables:
-            # there is a valid response from the API but we do not know if our variable exists yet
+    def getUserVar(self, variablesAPI=False):
+        if not variablesAPI:  # we initiate a connection
+            self.RegisterAPICall("/json.htm?type=command&param=getuservariables")
+        else:  # we respond to a connection !
             novar = True
             varname = Parameters["Name"] + "-InternalVariables"
             valuestring = ""
-            if "result" in variables:
-                for variable in variables["result"]:
+            if "result" in variablesAPI:
+                for variable in variablesAPI["result"]:
                     if variable["Name"] == varname:
                         valuestring = variable["Value"]
                         novar = False
@@ -482,24 +535,53 @@ class BasePlugin:
             if novar:
                 # create user variable since it does not exist
                 WriteLog("User Variable {} does not exist. Creation requested".format(varname), "Verbose")
-                DomoticzAPI("type=command&param=saveuservariable&vname={}&vtype=2&vvalue={}".format(
-                    varname, str(self.InternalsDefaults)))
+                self.RegisterAPICall("/json.htm?type=command&param=saveuservariable&vname={}&vtype=2&vvalue={}".format(
+                        varname, str(self.InternalsDefaults)))
                 self.Internals = self.InternalsDefaults.copy()  # we re-initialize the internal variables
             else:
                 try:
                     self.Internals.update(eval(valuestring))
                 except:
                     self.Internals = self.InternalsDefaults.copy()
-                return
-        else:
-            Domoticz.Error("Cannot read the uservariable holding the persistent variables")
-            self.Internals = self.InternalsDefaults.copy()
+                    Domoticz.Error("Error parsing uservariable, Using default parameters")
 
 
     def saveUserVar(self):
         varname = Parameters["Name"] + "-InternalVariables"
-        DomoticzAPI("type=command&param=updateuservariable&vname={}&vtype=2&vvalue={}".format(
+        self.RegisterAPICall("/json.htm?type=command&param=updateuservariable&vname={}&vtype=2&vvalue={}".format(
             varname, str(self.Internals)))
+
+
+    def RegisterAPICall(self, APICall):
+        if len(self.APICallsQueue) < 10:
+            self.APICallsQueue.append(parse.quote(APICall, safe="/&=?"))
+            Domoticz.Debug("Registering API Call -> {}".format(APICall))
+            Domoticz.Debug("Connected = {}, Connecting = {}".format(
+                self.APIConnection.Connected(), self.APIConnection.Connecting()))
+            if not self.APIConnection.Connected():
+                self.APIConnection.Connect()
+            else:
+                self.ProcessAPICalls()
+        else:
+            Domoticz.Error("API Calls queue full ! API Call dropped. This may cause SVT to misbehave")
+
+    def ProcessAPICalls(self):
+        Domoticz.Debug("API Calls queue is {} element(s)".format(len(self.APICallsQueue)))
+        while len(self.APICallsQueue) > 0:
+            APICall = self.APICallsQueue[0]
+            if self.APIConnection.Connected():
+                Domoticz.Debug("Processing API request = {}".format(APICall))
+                data = ''
+                headers = {'Content-Type': 'text/xml; charset=utf-8',
+                           'Connection': 'keep-alive',
+                           'Accept': 'Content-Type: text/html; charset=UTF-8',
+                           'Host': Parameters["Address"] + ":" + Parameters["Port"],
+                           'User-Agent': 'SVT/1.0',
+                           'Content-Length': "%d" % (len(data))}
+                self.APIConnection.Send({"Verb": "GET", "URL": APICall, "Headers": headers})
+                self.APICallsQueue.popleft()
+            else:
+                Domoticz.Debug("Unable to establish http transport with Domoticz: API command not processed !")
 
 
 global _plugin
@@ -514,6 +596,21 @@ def onStart():
 def onStop():
     global _plugin
     _plugin.onStop()
+
+
+def onConnect(Connection, Status, Description):
+    global _plugin
+    _plugin.onConnect(Connection, Status, Description)
+
+
+def onDisconnect(Connection):
+    global _plugin
+    _plugin.onDisconnect(Connection)
+
+
+def onMessage(Connection, Data):
+    global _plugin
+    _plugin.onMessage(Connection, Data)
 
 
 def onCommand(Unit, Command, Level, Hue):
@@ -556,23 +653,6 @@ def WriteLog(message, level="Normal"):
         Domoticz.Log(message)
     elif level == "Normal":
         Domoticz.Log(message)
-
-
-def DomoticzAPI(APICall):
-    resultJson = None
-    url = "http://{}:{}/json.htm?{}".format(Parameters["Address"], Parameters["Port"], parse.quote(APICall, safe="&="))
-    try:
-        response = request.urlopen(url)
-        if response.status == 200:
-            resultJson = json.loads(response.read().decode('utf-8'))
-            if resultJson["status"] != "OK":
-                Domoticz.Error("Domoticz API returned an error: status = {}".format(resultJson["status"]))
-                resultJson = None
-        else:
-            Domoticz.Error("Domoticz API: http error = {}".format(response.status))
-    except:
-        Domoticz.Error("Error calling '{}'".format(url))
-    return resultJson
 
 
 # Generic helper functions
