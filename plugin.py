@@ -114,6 +114,7 @@ class BasePlugin:
         self.nexttemps = self.endheat
         self.learn = True
         self.APICallsQueue = collections.deque()
+        self.connectionrequested = False
         return
 
 
@@ -211,6 +212,7 @@ class BasePlugin:
         Domoticz.Debug("onConnect called")
         if Status == 0:
             self.ProcessAPICalls()
+            self.connectionrequested = False
         else:
             Domoticz.Error("Failed to connect ({}) to: {}: with error: ".format(
                 Status, Parameters["Address"], Parameters["Port"], Description))
@@ -283,8 +285,9 @@ class BasePlugin:
         if len(self.APICallsQueue) > 0:
             if self.APIConnection.Connected():
                 self.ProcessAPICalls()
-            else:
+            elif not self.connectionrequested:
                 self.APIConnection.Connect()
+                self.connectionrequested = True
 
         if Devices[1].sValue == "0":  # Thermostat is off
             if self.forced or self.heat:  # thermostat setting was just changed so we kill the heating
@@ -558,10 +561,11 @@ class BasePlugin:
             Domoticz.Debug("Registering API Call -> {}".format(APICall))
             Domoticz.Debug("Connected = {}, Connecting = {}".format(
                 self.APIConnection.Connected(), self.APIConnection.Connecting()))
-            if not self.APIConnection.Connected():
-                self.APIConnection.Connect()
-            else:
+            if self.APIConnection.Connected():
                 self.ProcessAPICalls()
+            elif not self.connectionrequested:
+                self.APIConnection.Connect()
+                self.connectionrequested = True
         else:
             Domoticz.Error("API Calls queue full ! API Call dropped. This may cause SVT to misbehave")
 
