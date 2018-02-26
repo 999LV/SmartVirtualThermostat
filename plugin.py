@@ -43,6 +43,8 @@ Version:    0.0.1: alpha
     <params>
         <param field="Address" label="Domoticz IP Address" width="200px" required="true" default="127.0.0.1"/>
         <param field="Port" label="Port" width="40px" required="true" default="8080"/>
+        <param field="Username" label="Username" width="200px" required="false" default=""/>
+        <param field="Password" label="Password" width="200px" required="false" default=""/>
         <param field="Mode1" label="Inside Temperature Sensors (csv list of idx)" width="100px" required="true" default="0"/>
         <param field="Mode2" label="Outside Temperature Sensors (csv list of idx)" width="100px" required="false" default=""/>
         <param field="Mode3" label="Heating Switches (csv list of idx)" width="100px" required="true" default="0"/>
@@ -63,6 +65,7 @@ import urllib.parse as parse
 import urllib.request as request
 from datetime import datetime, timedelta
 import time
+import base64
 
 class deviceparam:
 
@@ -562,7 +565,14 @@ def DomoticzAPI(APICall):
     resultJson = None
     url = "http://{}:{}/json.htm?{}".format(Parameters["Address"], Parameters["Port"], parse.quote(APICall, safe="&="))
     try:
-        response = request.urlopen(url)
+        req = request.Request(url)
+        if Parameters["Username"] != "":
+            WriteLog("Add authentification for user {}".format(Parameters["Username"]), "Debug")
+            credentials = ('%s:%s' % (Parameters["Username"], Parameters["Password"]))
+            encoded_credentials = base64.b64encode(credentials.encode('ascii'))
+            req.add_header('Authorization', 'Basic %s' % encoded_credentials.decode("ascii"))
+
+        response = request.urlopen(req)
         if response.status == 200:
             resultJson = json.loads(response.read().decode('utf-8'))
             if resultJson["status"] != "OK":
