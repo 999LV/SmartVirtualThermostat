@@ -37,21 +37,54 @@ Version:    0.0.1: alpha
                     very high thermal inertia systems like heating floors that work better if kept warm enough)
                     Thanks to domoticz forum user @napo7
             0.3.8: minor improvements to thermostat temperature update logic, some code cleanup
+            0.3.9: GitHub contribution from @SoaR245: add support for domoticz webserver authentication if enabled
+            0.4.0: unpublished version (test of Domoticz.Connection method vs. urllib.request)
+            0.4.1: Cumulative update:
+                   (1) add option to force or not minimum heating per cycle even if target temperature
+                       is already reached (thanks to domoticz forum user @jake)
+                   (2) check heater(s) switch status before an update to avoid issuing uncessary switching commands
+                       (thanks to domoticz forum user @jake)
+                   (3) some minor error checks added when parsing parameters at startup
+                   (4) implement new debugging levels introduced by @dnpwwo
+                   (5) some code cleanup and optimization
+
 """
 """
-<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.3.8" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
+<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.1" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
+    <description>
+        <h2>Smart Virtual Thermostat</h2><br/>
+        Easily implement in Domoticz an advanced virtual thermostat based on time modulation<br/>
+        and self learning of relevant room thermal characteristics (including insulation level)<br/>
+        rather then more conventional hysteresis methods, so as to achieve a greater comfort.<br/>
+        It is a port to Domoticz of the original Vera plugin from Antor.<br/>
+        <h3>Set-up and Configuration</h3>
+        See domoticz wiki above.<br/> 
+    </description>
     <params>
-        <param field="Address" label="Domoticz IP Address" width="200px" required="true" default="127.0.0.1"/>
+        <param field="Address" label="Domoticz IP Address" width="200px" required="true" default="localhost"/>
         <param field="Port" label="Port" width="40px" required="true" default="8080"/>
+        <param field="Username" label="Username" width="200px" required="false" default=""/>
+        <param field="Password" label="Password" width="200px" required="false" default=""/>
         <param field="Mode1" label="Inside Temperature Sensors (csv list of idx)" width="100px" required="true" default="0"/>
         <param field="Mode2" label="Outside Temperature Sensors (csv list of idx)" width="100px" required="false" default=""/>
         <param field="Mode3" label="Heating Switches (csv list of idx)" width="100px" required="true" default="0"/>
-        <param field="Mode5" label="Calculation cycle, Minimum Heating time per cycle, Pause On delay, Pause Off delay, Forced mode duration (all in minutes)" width="200px" required="true" default="30,0,2,1,60"/>
-        <param field="Mode6" label="Logging Level" width="75px">
+        <param field="Mode4" label="Apply minimum heating per cycle" width="200px">
             <options>
-                <option label="Debug" value="Debug"/>
+				<option label="ony when heating required" value="Normal"  default="true" />
+                <option label="always" value="Forced"/>
+            </options>
+        </param> 
+        <param field="Mode5" label="Calculation cycle, Minimum Heating time per cycle, Pause On delay, Pause Off delay, Forced mode duration (all in minutes)" width="200px" required="true" default="30,0,2,1,60"/>
+        <param field="Mode6" label="Logging Level" width="200px">
+            <options>
+                <option label="Normal" value="Normal"  default="true"/>
                 <option label="Verbose" value="Verbose"/>
-                <option label="Normal" value="Normal"  default="true" />
+                <option label="Debug - Python Only" value="2"/>
+                <option label="Debug - Basic" value="62"/>
+                <option label="Debug - Basic+Messages" value="126"/>
+                <option label="Debug - Connections Only" value="16"/>
+                <option label="Debug - Connections+Queue" value="144"/>
+                <option label="Debug - All" value="-1"/>
             </options>
         </param>
     </params>
@@ -63,6 +96,7 @@ import urllib.parse as parse
 import urllib.request as request
 from datetime import datetime, timedelta
 import time
+import base64
 
 class deviceparam:
 
@@ -75,6 +109,7 @@ class deviceparam:
 class BasePlugin:
 
     def __init__(self):
+
         self.debug = False
         self.calculate_period = 30  # Time in minutes between two calculations (cycle)
         self.minheatpower = 0  # if heating is needed, minimum heat power (in % of calculation period)
@@ -114,11 +149,20 @@ class BasePlugin:
 
 
     def onStart(self):
-        if Parameters["Mode6"] == 'Debug':
+
+        # setup the appropriate logging level
+        try:
+            debuglevel = int(Parameters["Mode6"])
+        except ValueError:
+            debuglevel = 0
+            self.loglevel = Parameters["Mode6"]
+        if debuglevel != 0:
             self.debug = True
-            Domoticz.Debugging(1)
+            Domoticz.Debugging(debuglevel)
             DumpConfigToLog()
+            self.loglevel = "Verbose"
         else:
+            self.debug = False
             Domoticz.Debugging(0)
 
         # create the child devices if these do not exist yet
@@ -130,7 +174,6 @@ class BasePlugin:
                        "SelectorStyle": "0"}
             Domoticz.Device(Name="Thermostat Control", Unit=1, TypeName="Selector Switch", Switchtype=18, Image=15,
                             Options=Options, Used=1).Create()
-            #Devices[1].Update(nValue=0, sValue="0")  # default is Off state
             devicecreated.append(deviceparam(1, 0, "0"))  # default is Off state
         if 2 not in Devices:
             Options = {"LevelActions": "||",
@@ -168,17 +211,17 @@ class BasePlugin:
         # splits additional parameters
         params = parseCSV(Parameters["Mode5"])
         if len(params) == 5:
-            self.calculate_period = params[0]
+            self.calculate_period = CheckParam("Calculation Period", params[0], 30)
             if self.calculate_period < 5:
                 Domoticz.Error("Invalid calculation period parameter. Using minimum of 5 minutes !")
                 self.calculate_period = 5
-            self.minheatpower = params[1]
+            self.minheatpower = CheckParam("Minimum Heating (%)", params[1], 0)
             if self.minheatpower > 100:
                 Domoticz.Error("Invalid minimum heating parameter. Using maximum of 100% !")
                 self.minheatpower = 100
-            self.pauseondelay = params[2]
-            self.pauseoffdelay = params[3]
-            self.forcedduration = params[4]
+            self.pauseondelay = CheckParam("Pause On Delay", params[2], 2)
+            self.pauseoffdelay = CheckParam("Pause Off Delay", params[3], 0)
+            self.forcedduration = CheckParam("Forced Mode Duration", params[4], 60)
             if self.forcedduration < 30:
                 Domoticz.Error("Invalid forced mode duration parameter. Using minimum of 30 minutes !")
                 self.calculate_period = 30
@@ -196,12 +239,15 @@ class BasePlugin:
 
 
     def onStop(self):
+
         Domoticz.Debugging(0)
 
 
-    def onCommand(self, Unit, Command, Level, Hue):
+    def onCommand(self, Unit, Command, Level, Color):
+
         Domoticz.Debug("onCommand called for Unit {}: Command '{}', Level: {}".format(Unit, Command, Level))
-        if Unit == 3:
+
+        if Unit == 3:  # pause switch
             self.pauserequestchangedtime = datetime.now()
             svalue = ""
             if str(Command) == "On":
@@ -211,12 +257,11 @@ class BasePlugin:
                 nvalue = 0
                 self.pauserequested = False
         else:
-            if Level > 0:
-                nvalue = 1
-            else:
-                nvalue = 0
+            nvalue = 1 if Level > 0 else 0
             svalue = str(Level)
+
         Devices[Unit].Update(nValue=nvalue, sValue=svalue)
+
         if Unit in (1, 2, 4, 5): # force recalculation if control or mode or a setpoint changed
             self.nextcalc = datetime.now()
             self.learn = False
@@ -314,10 +359,13 @@ class BasePlugin:
 
 
     def AutoMode(self):
+
         if self.intemp > self.setpoint + self.deltamax:
-            Domoticz.Debug("Temperature exceeds setpoint: no heating")
+            Domoticz.Debug("Temperature exceeds setpoint")
+            overshoot = True
             power = 0
         else:
+            overshoot = False
             if self.learn:
                 self.AutoCallib()
             else:
@@ -332,15 +380,18 @@ class BasePlugin:
             power = 0  # lower limit
         elif power > 100:
             power = 100  # upper limit
-        if power <= self.minheatpower:
-            power = self.minheatpower  # minimum heating per cycle in % of cycle time
+
+        # apply minimum power as required
+        if power <= self.minheatpower and (Parameters["Mode4"] == "Forced" or not overshoot):
+            Domoticz.Debug("Calculated power is {}, applying minimum power of {}".format(power, self.minheatpower))
+            power = self.minheatpower
 
         heatduration = round(power * self.calculate_period / 100)
-        WriteLog("Calculation: Power = {} -> heat duration = {} minutes".format(power, heatduration), "Verbose")
+        self.WriteLog("Calculation: Power = {} -> heat duration = {} minutes".format(power, heatduration), "Verbose")
 
         if power == 0:
             self.switchHeat(False)
-            Domoticz.Debug("No heating required !")
+            Domoticz.Debug("No heating requested !")
         else:
             self.endheat = datetime.now() + timedelta(minutes=heatduration)
             Domoticz.Debug("End Heat time = " + str(self.endheat))
@@ -357,6 +408,7 @@ class BasePlugin:
 
 
     def AutoCallib(self):
+
         now = datetime.now()
         if self.Internals['ALStatus'] != 1:  # not initalized... do nothing
             Domoticz.Debug("Fist pass at AutoCallib... no callibration")
@@ -374,11 +426,11 @@ class BasePlugin:
                                                   (self.intemp - self.Internals['LastInT']) *
                                                   (timedelta.total_seconds(now - self.lastcalc) /
                                                    (self.calculate_period * 60))))
-            WriteLog("New calc for ConstC = {}".format(ConstC), "Verbose")
+            self.WriteLog("New calc for ConstC = {}".format(ConstC), "Verbose")
             self.Internals['ConstC'] = round((self.Internals['ConstC'] * self.Internals['nbCC'] + ConstC) /
                                              (self.Internals['nbCC'] + 1), 1)
             self.Internals['nbCC'] = min(self.Internals['nbCC'] + 1, 50)
-            WriteLog("ConstC updated to {}".format(self.Internals['ConstC']), "Verbose")
+            self.WriteLog("ConstC updated to {}".format(self.Internals['ConstC']), "Verbose")
         elif self.outtemp is not None and self.Internals['LastSetPoint'] > self.Internals['LastOutT']:
             # learning ConstT
             ConstT = (self.Internals['ConstT'] + ((self.Internals['LastSetPoint'] - self.intemp) /
@@ -386,30 +438,42 @@ class BasePlugin:
                                                   self.Internals['ConstC'] *
                                                   (timedelta.total_seconds(now - self.lastcalc) /
                                                    (self.calculate_period * 60))))
-            WriteLog("New calc for ConstT = {}".format(ConstT), "Verbose")
+            self.WriteLog("New calc for ConstT = {}".format(ConstT), "Verbose")
             self.Internals['ConstT'] = round((self.Internals['ConstT'] * self.Internals['nbCT'] + ConstT) /
                                              (self.Internals['nbCT'] + 1), 1)
             self.Internals['nbCT'] = min(self.Internals['nbCT'] + 1, 50)
-            WriteLog("ConstT updated to {}".format(self.Internals['ConstT']), "Verbose")
+            self.WriteLog("ConstT updated to {}".format(self.Internals['ConstT']), "Verbose")
 
 
     def switchHeat(self, switch):
-        if switch:  # heating on
-            self.heat = True
-            Domoticz.Debug("Heating On")
-            # switch on heater(s)
-            for heater in self.Heaters:
-                DomoticzAPI("type=command&param=switchlight&idx={}&switchcmd=On".format(heater))
+
+        # Build list of heater switches, with their current status,
+        # to be used to check if any of the heaters is already in desired state
+        switches = {}
+        devicesAPI = DomoticzAPI("type=devices&filter=light&used=true&order=Name")
+        if devicesAPI:
+            for device in devicesAPI["result"]:  # parse the switch device
+                idx = int(device["idx"])
+                if idx in self.Heaters:  # this switch is one of our heaters
+                    if "Status" in device:
+                        switches[idx] = True if device["Status"] == "On" else False
+                        Domoticz.Debug("Heater switch {} currently is '{}'".format(idx, device["Status"]))
+                    else:
+                        Domoticz.Error("Device with idx={} does not seem to be a switch !".format(idx))
+
+        # flip on / off as needed
+        self.heat = switch
+        command = "On" if switch else "Off"
+        Domoticz.Debug("Heating '{}'".format(command))
+        for idx in self.Heaters:
+            if switches[idx] != switch:  # check if action needed
+                DomoticzAPI("type=command&param=switchlight&idx={}&switchcmd={}".format(idx, command))
+        if switch:
             Domoticz.Debug("End Heat time = " + str(self.endheat))
-        else:
-            self.heat = False
-            Domoticz.Debug("Heating Off")
-            # switch off heater(s)
-            for heater in self.Heaters:
-                DomoticzAPI("type=command&param=switchlight&idx={}&switchcmd=Off".format(heater))
 
 
     def readTemps(self):
+
         # set update flag for next temp update (used only when in off, forced mode or pause is active)
         self.nexttemps = datetime.now() + timedelta(minutes=self.calculate_period)
 
@@ -461,12 +525,13 @@ class BasePlugin:
             Domoticz.Debug("No Outside Temperature found...")
             self.outtemp = None
 
-        WriteLog("Inside Temperature = {}".format(self.intemp), "Verbose")
-        WriteLog("Outside Temperature = {}".format(self.outtemp), "Verbose")
+        self.WriteLog("Inside Temperature = {}".format(self.intemp), "Verbose")
+        self.WriteLog("Outside Temperature = {}".format(self.outtemp), "Verbose")
         return noerror
 
 
     def getUserVar(self):
+
         variables = DomoticzAPI("type=command&param=getuservariables")
         if variables:
             # there is a valid response from the API but we do not know if our variable exists yet
@@ -481,7 +546,7 @@ class BasePlugin:
                         break
             if novar:
                 # create user variable since it does not exist
-                WriteLog("User Variable {} does not exist. Creation requested".format(varname), "Verbose")
+                self.WriteLog("User Variable {} does not exist. Creation requested".format(varname), "Verbose")
                 DomoticzAPI("type=command&param=saveuservariable&vname={}&vtype=2&vvalue={}".format(
                     varname, str(self.InternalsDefaults)))
                 self.Internals = self.InternalsDefaults.copy()  # we re-initialize the internal variables
@@ -497,9 +562,17 @@ class BasePlugin:
 
 
     def saveUserVar(self):
+
         varname = Parameters["Name"] + "-InternalVariables"
         DomoticzAPI("type=command&param=updateuservariable&vname={}&vtype=2&vvalue={}".format(
             varname, str(self.Internals)))
+
+    def WriteLog(self, message, level="Normal"):
+
+        if self.loglevel == "Verbose" and level == "Verbose":
+            Domoticz.Log(message)
+        elif level == "Normal":
+            Domoticz.Log(message)
 
 
 global _plugin
@@ -516,9 +589,9 @@ def onStop():
     _plugin.onStop()
 
 
-def onCommand(Unit, Command, Level, Hue):
+def onCommand(Unit, Command, Level, Color):
     global _plugin
-    _plugin.onCommand(Unit, Command, Level, Hue)
+    _plugin.onCommand(Unit, Command, Level, Color)
 
 
 def onHeartbeat():
@@ -528,7 +601,9 @@ def onHeartbeat():
 
 # Plugin utility functions ---------------------------------------------------
 
+
 def SensorTimedOut(datestring):
+
     def LastUpdate(datestring):
         dateformat = "%Y-%m-%d %H:%M:%S"
         # the below try/except is meant to address an intermittent python bug in some embedded systems
@@ -537,9 +612,12 @@ def SensorTimedOut(datestring):
         except TypeError:
             result = datetime(*(time.strptime(datestring, dateformat)[0:6]))
         return result
+
     return LastUpdate(datestring) + timedelta(minutes=int(Settings["SensorTimeout"])) < datetime.now()
 
+
 def parseCSV(strCSV):
+
     listvals = []
     for value in strCSV.split(","):
         try:
@@ -551,18 +629,20 @@ def parseCSV(strCSV):
     return listvals
 
 
-def WriteLog(message, level="Normal"):
-    if Parameters["Mode6"] == "Verbose" or Parameters["Mode6"] == "Debug":
-        Domoticz.Log(message)
-    elif level == "Normal":
-        Domoticz.Log(message)
-
-
 def DomoticzAPI(APICall):
+
     resultJson = None
     url = "http://{}:{}/json.htm?{}".format(Parameters["Address"], Parameters["Port"], parse.quote(APICall, safe="&="))
+    Domoticz.Debug("Calling domoticz API: {}".format(url))
     try:
-        response = request.urlopen(url)
+        req = request.Request(url)
+        if Parameters["Username"] != "":
+            Domoticz.Debug("Add authentification for user {}".format(Parameters["Username"]))
+            credentials = ('%s:%s' % (Parameters["Username"], Parameters["Password"]))
+            encoded_credentials = base64.b64encode(credentials.encode('ascii'))
+            req.add_header('Authorization', 'Basic %s' % encoded_credentials.decode("ascii"))
+
+        response = request.urlopen(req)
         if response.status == 200:
             resultJson = json.loads(response.read().decode('utf-8'))
             if resultJson["status"] != "OK":
@@ -573,6 +653,16 @@ def DomoticzAPI(APICall):
     except:
         Domoticz.Error("Error calling '{}'".format(url))
     return resultJson
+
+
+def CheckParam(name, value, default):
+
+    try:
+        param = int(value)
+    except ValueError:
+        param = default
+        Domoticz.Error("Parameter '{}' has an invalid value of '{}' ! defaut of '{}' is instead used.".format(name, value, default))
+    return param
 
 
 # Generic helper functions
