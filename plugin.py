@@ -47,6 +47,10 @@ Version:    0.0.1: alpha
                    (3) some minor error checks added when parsing parameters at startup
                    (4) implement new debugging levels introduced by @dnpwwo
                    (5) some code cleanup and optimization
+            0.4.2: Unpublished test
+            0.4.3: Call domoticz json API at least every 5 minutes to avoid the 10 mins timout of connections that
+                    floods domoticz's log with "Incoming Connection from ...." messages. Take advantage of this to
+                    update the temperature readings more often than upon each calculation
 
 """
 """
@@ -279,10 +283,6 @@ class BasePlugin:
                 Domoticz.Debug("Switching heat Off !")
                 self.switchHeat(False)
 
-            if self.nexttemps <= now:
-                # call the Domoticz json API for a temperature devices update, to get the lastest temps...
-                self.readTemps()
-
         elif Devices[1].sValue == "20":  # Thermostat is in forced mode
             if self.forced:
                 if self.endheat <= now:
@@ -296,10 +296,6 @@ class BasePlugin:
                 self.endheat = now + timedelta(minutes=self.forcedduration)
                 Domoticz.Debug("Forced mode On !")
                 self.switchHeat(True)
-
-            if self.nexttemps <= now:
-                # call the Domoticz json API for a temperature devices update, to get the lastest temps...
-                self.readTemps()
 
         else:  # Thermostat is in mode auto
 
@@ -329,10 +325,6 @@ class BasePlugin:
                     self.pause = True
                     self.switchHeat(False)
 
-            elif self.pause and self.nexttemps <= now:  # added to update thermostat temp even in pause mode
-                # call the Domoticz json API for a temperature devices update, to get the lastest temps...
-                self.readTemps()
-
             elif (self.nextcalc <= now) and not self.pause:  # we start a new calculation
                 self.nextcalc = now + timedelta(minutes=self.calculate_period)
                 Domoticz.Debug("Next calculation time will be : " + str(self.nextcalc))
@@ -350,6 +342,11 @@ class BasePlugin:
                 else:
                     # make sure we switch off heating if there was an error with reading the temp
                     self.switchHeat(False)
+
+        if self.nexttemps <= now:
+            # call the Domoticz json API for a temperature devices update, to get the lastest temps (and avoid the
+            # connection time out time after 10mins that floods domoticz logs in versions of domoticz since spring 2018)
+            self.readTemps()
 
         # check if need to refresh setpoints so that they do not turn red in GUI
         if self.nextupdate <= now:
@@ -474,8 +471,8 @@ class BasePlugin:
 
     def readTemps(self):
 
-        # set update flag for next temp update (used only when in off, forced mode or pause is active)
-        self.nexttemps = datetime.now() + timedelta(minutes=self.calculate_period)
+        # set update flag for next temp update
+        self.nexttemps = datetime.now() + timedelta(minutes=5)
 
         # fetch all the devices from the API and scan for sensors
         noerror = True
