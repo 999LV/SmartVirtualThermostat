@@ -555,7 +555,7 @@ class BasePlugin:
             if novar:
                 # create user variable since it does not exist
                 self.WriteLog("User Variable {} does not exist. Creation requested".format(varname), "Verbose")
-                DomoticzAPI("type=command&param=saveuservariable&vname={}&vtype=2&vvalue={}".format(
+                DomoticzAPI("type=command&param=adduservariable&vname={}&vtype=2&vvalue={}".format(
                     varname, str(self.InternalsDefaults)))
                 self.Internals = self.InternalsDefaults.copy()  # we re-initialize the internal variables
             else:
