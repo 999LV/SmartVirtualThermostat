@@ -101,6 +101,7 @@ from datetime import datetime, timedelta
 import time
 import base64
 import itertools
+from distutils.version import LooseVersion
 
 class deviceparam:
 
@@ -237,11 +238,6 @@ class BasePlugin:
                 self.calculate_period = 30
         else:
             Domoticz.Error("Error reading Mode5 parameters")
-
-        # get a status of the actual running Domoticz instance
-        self.domoticzInfo = DomoticzAPI("type=command&param=getversion")
-        if !self.domoticzInfo:
-            Domoticz.Error("Unable to fetch Domoticz info... there should be some issue calling APIs")
 
         # loads persistent variables from dedicated user variable
         # note: to reset the thermostat to default values (i.e. ignore all past learning),
@@ -562,15 +558,24 @@ class BasePlugin:
                 # create user variable since it does not exist
                 self.WriteLog("User Variable {} does not exist. Creation requested".format(varname), "Verbose")
 
-                # there is a breaking change on version 4.10298, API was changed from 'saveuservariable' to 'adduservariable'
-                # using 'saveuservariable' returns a "status = 'ERR'" error
-                parameter = "saveuservariable"
-                if (self.domoticzInfo and float(self.domoticzInfo["version"]) >= 4.10298):
-                    parameter = "adduservariable"
+                #check for Domoticz version:
+                # there is a breaking change on dzvents_version 2.4.9, API was changed from 'saveuservariable' to 'adduservariable'
+                # using 'saveuservariable' on latest versions returns a "status = 'ERR'" error
 
+                # get a status of the actual running Domoticz instance, set the parameter accordigly
+                parameter = "saveuservariable"
+                domoticzInfo = DomoticzAPI("type=command&param=getversion")
+                if domoticzInfo is None:
+                    Domoticz.Error("Unable to fetch Domoticz info... unable to determine version")
+                else:
+                    if (domoticzInfo and LooseVersion(domoticzInfo["dzvents_version"]) >= LooseVersion("2.4.9")):
+                        self.WriteLog("Use 'adduservariable' instead of 'saveuservariable'", "Verbose")
+                        parameter = "adduservariable"
+                
                 # actually calling Domoticz API
                 DomoticzAPI("type=command&param={}&vname={}&vtype=2&vvalue={}".format(
                     parameter, varname, str(self.InternalsDefaults)))
+                
                 self.Internals = self.InternalsDefaults.copy()  # we re-initialize the internal variables
             else:
                 try:
