@@ -101,6 +101,7 @@ from datetime import datetime, timedelta
 import time
 import base64
 import itertools
+from distutils.version import LooseVersion
 
 class deviceparam:
 
@@ -150,6 +151,7 @@ class BasePlugin:
         self.nextupdate = self.endheat
         self.nexttemps = self.endheat
         self.learn = True
+        self.domoticzInfo = {}
         return
 
 
@@ -555,8 +557,25 @@ class BasePlugin:
             if novar:
                 # create user variable since it does not exist
                 self.WriteLog("User Variable {} does not exist. Creation requested".format(varname), "Verbose")
-                DomoticzAPI("type=command&param=saveuservariable&vname={}&vtype=2&vvalue={}".format(
-                    varname, str(self.InternalsDefaults)))
+
+                #check for Domoticz version:
+                # there is a breaking change on dzvents_version 2.4.9, API was changed from 'saveuservariable' to 'adduservariable'
+                # using 'saveuservariable' on latest versions returns a "status = 'ERR'" error
+
+                # get a status of the actual running Domoticz instance, set the parameter accordigly
+                parameter = "saveuservariable"
+                domoticzInfo = DomoticzAPI("type=command&param=getversion")
+                if domoticzInfo is None:
+                    Domoticz.Error("Unable to fetch Domoticz info... unable to determine version")
+                else:
+                    if (domoticzInfo and LooseVersion(domoticzInfo["dzvents_version"]) >= LooseVersion("2.4.9")):
+                        self.WriteLog("Use 'adduservariable' instead of 'saveuservariable'", "Verbose")
+                        parameter = "adduservariable"
+                
+                # actually calling Domoticz API
+                DomoticzAPI("type=command&param={}&vname={}&vtype=2&vvalue={}".format(
+                    parameter, varname, str(self.InternalsDefaults)))
+                
                 self.Internals = self.InternalsDefaults.copy()  # we re-initialize the internal variables
             else:
                 try:
