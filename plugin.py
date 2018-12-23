@@ -150,6 +150,7 @@ class BasePlugin:
         self.nextupdate = self.endheat
         self.nexttemps = self.endheat
         self.learn = True
+        self.domoticzInfo = {}
         return
 
 
@@ -236,6 +237,11 @@ class BasePlugin:
                 self.calculate_period = 30
         else:
             Domoticz.Error("Error reading Mode5 parameters")
+
+        # get a status of the actual running Domoticz instance
+        self.domoticzInfo = DomoticzAPI("type=command&param=getversion")
+        if !self.domoticzInfo:
+            Domoticz.Error("Unable to fetch Domoticz info... there should be some issue calling APIs")
 
         # loads persistent variables from dedicated user variable
         # note: to reset the thermostat to default values (i.e. ignore all past learning),
@@ -555,8 +561,16 @@ class BasePlugin:
             if novar:
                 # create user variable since it does not exist
                 self.WriteLog("User Variable {} does not exist. Creation requested".format(varname), "Verbose")
-                DomoticzAPI("type=command&param=adduservariable&vname={}&vtype=2&vvalue={}".format(
-                    varname, str(self.InternalsDefaults)))
+
+                # there is a breaking change on version 4.10298, API was changed from 'saveuservariable' to 'adduservariable'
+                # using 'saveuservariable' returns a "status = 'ERR'" error
+                parameter = "saveuservariable"
+                if (self.domoticzInfo and float(self.domoticzInfo["version"]) >= 4.10298):
+                    parameter = "adduservariable"
+
+                # actually calling Domoticz API
+                DomoticzAPI("type=command&param={}&vname={}&vtype=2&vvalue={}".format(
+                    parameter, varname, str(self.InternalsDefaults)))
                 self.Internals = self.InternalsDefaults.copy()  # we re-initialize the internal variables
             else:
                 try:
