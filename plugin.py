@@ -51,6 +51,9 @@ Version:    0.0.1: alpha
                     update the temperature readings more often than upon each calculation
             0.4.4: implement list of active/dead sensors to avoid continuous logging of dead sensors,
             		also added some ´fool proof´ error handlers based on users feedback
+            0.4.5: adjust uservariable creation to breaking change introduced by domoticz version 4.10298
+                    thanks to GitHub contributor @informagico
+            0.4.6: some clean up of logging levels (accept older versions of domoticz) and variables scoping/typing
 """
 """
 <plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.6" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
