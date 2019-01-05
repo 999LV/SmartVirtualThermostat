@@ -54,9 +54,10 @@ Version:    0.0.1: alpha
             0.4.5: adjust uservariable creation to breaking change introduced by domoticz version 4.10298
                     thanks to GitHub contributor @informagico
             0.4.6: some clean up of logging levels (accept older versions of domoticz) and variables scoping/typing
+            0.4.7: slight adjustement to verbose logging to reduce clutter
 """
 """
-<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.6" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
+<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.7" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
     <description>
         <h2>Smart Virtual Thermostat</h2><br/>
         Easily implement in Domoticz an advanced virtual thermostat based on time modulation<br/>
@@ -379,6 +380,8 @@ class BasePlugin:
 
     def AutoMode(self):
 
+        self.WriteLog("Temperatures: Inside = {} / Outside = {}".format(self.intemp, self.outtemp), "Verbose")
+
         if self.intemp > self.setpoint + self.deltamax:
             self.WriteLog("Temperature exceeds setpoint", "Verbose")
             overshoot = True
@@ -546,8 +549,8 @@ class BasePlugin:
             Domoticz.Debug("No Outside Temperature found...")
             self.outtemp = None
 
-        self.WriteLog("Inside Temperature = {}".format(self.intemp), "Verbose")
-        self.WriteLog("Outside Temperature = {}".format(self.outtemp), "Verbose")
+        Domoticz.Debug("Inside Temperature = {}".format(self.intemp))
+        Domoticz.Debug("Outside Temperature = {}".format(self.outtemp))
         return noerror
 
 
