@@ -55,9 +55,6 @@ Version:    0.0.1: alpha
                     thanks to GitHub contributor @informagico
             0.4.6: some clean up of logging levels (accept older versions of domoticz) and variables scoping/typing
             0.4.7: slight adjustement to verbose logging to reduce clutter
-            0.4.8: change behavior if no valid inside temperature reading: switch heating off instead of switching
-                    the thermostat off... then if and when there is a valid temperature the thermostat resumes work
-                    Thanks to GitHub user @Kptn77 for suggestion.
 """
 """
 <plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.7" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
@@ -160,7 +157,6 @@ class BasePlugin:
         self.learn = True
         self.loglevel = None
         self.statussupported = True
-        self.intemperror = False
         return
 
 
@@ -538,24 +534,12 @@ class BasePlugin:
         nbtemps = len(listintemps)
         if nbtemps > 0:
             self.intemp = round(sum(listintemps) / nbtemps, 1)
-            # update the dummy device showing the current thermostat temp
-            Devices[6].Update(nValue=0, sValue=str(self.intemp), TimeOut=False)
-            if self.intemperror:  # there was previously an invalid inside temperature reading... reset to normal
-                self.intemperror = False
-                self.WriteLog("Inside Temperature reading is now valid again: Resuming normal operation", "Status")
-                Domoticz.Error("No Inside Temperature found... Switching heating Off")
-                # we remove the timedout flag on the thermostat switch
-                Devices[1].Update(nValue=Devices[1].nValue, sValue=Devices[1].sValue, TimedOut=False)
+            Devices[6].Update(nValue=0,
+                              sValue=str(self.intemp))  # update the dummy device showing the current thermostat temp
         else:
-            # no valid inside temperature
+            Domoticz.Error("No Inside Temperature found... Switching Thermostat Off")
+            Devices[1].Update(nValue=0, sValue="0")  # switch off the thermostat
             noerror = False
-            if not self.intemperror:
-                self.intemperror = True
-                Domoticz.Error("No Inside Temperature found: Switching heating Off")
-                self.switchHeat(False)
-                # we mark both the thermostat switch and the thermostat temp devices as timedout
-                Devices[1].Update(nValue=Devices[1].nValue, sValue=Devices[1].sValue, TimedOut=True)
-                Devices[6].Update(nValue=Devices[6].nValue, sValue=Devices[6].sValue, TimedOut=True)
 
         # calculate the average outside temperature
         nbtemps = len(listouttemps)
