@@ -55,6 +55,9 @@ Version:    0.0.1: alpha
                     thanks to GitHub contributor @informagico
             0.4.6: some clean up of logging levels (accept older versions of domoticz) and variables scoping/typing
             0.4.7: slight adjustement to verbose logging to reduce clutter
+            0.4.8: change behavior if no valid inside temperature reading: switch heating off instead of switching
+                    the thermostat off... then if and when there is a valid temperature the thermostat resumes work
+                    Thanks to GitHub user @Kptn77 for suggestion.
 """
 """
 <plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.8" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
