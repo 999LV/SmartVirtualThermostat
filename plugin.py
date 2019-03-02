@@ -57,7 +57,7 @@ Version:    0.0.1: alpha
             0.4.7: slight adjustement to verbose logging to reduce clutter
 """
 """
-<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.7" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
+<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.8" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
     <description>
         <h2>Smart Virtual Thermostat</h2><br/>
         Easily implement in Domoticz an advanced virtual thermostat based on time modulation<br/>
@@ -157,6 +157,7 @@ class BasePlugin:
         self.learn = True
         self.loglevel = None
         self.statussupported = True
+        self.intemperror = False
         return
 
 
@@ -534,12 +535,23 @@ class BasePlugin:
         nbtemps = len(listintemps)
         if nbtemps > 0:
             self.intemp = round(sum(listintemps) / nbtemps, 1)
-            Devices[6].Update(nValue=0,
-                              sValue=str(self.intemp))  # update the dummy device showing the current thermostat temp
+            # update the dummy device showing the current thermostat temp
+            Devices[6].Update(nValue=0, sValue=str(self.intemp), TimeOut=False)
+            if self.intemperror:  # there was previously an invalid inside temperature reading... reset to normal
+                self.intemperror = False
+                self.WriteLog("Inside Temperature reading is now valid again: Resuming normal operation", "Status")
+                # we remove the timedout flag on the thermostat switch
+                Devices[1].Update(nValue=Devices[1].nValue, sValue=Devices[1].sValue, TimedOut=False)
         else:
-            Domoticz.Error("No Inside Temperature found... Switching Thermostat Off")
-            Devices[1].Update(nValue=0, sValue="0")  # switch off the thermostat
+            # no valid inside temperature
             noerror = False
+            if not self.intemperror:
+                self.intemperror = True
+                Domoticz.Error("No Inside Temperature found: Switching heating Off")
+                self.switchHeat(False)
+                # we mark both the thermostat switch and the thermostat temp devices as timedout
+                Devices[1].Update(nValue=Devices[1].nValue, sValue=Devices[1].sValue, TimedOut=True)
+                Devices[6].Update(nValue=Devices[6].nValue, sValue=Devices[6].sValue, TimedOut=True)
 
         # calculate the average outside temperature
         nbtemps = len(listouttemps)
