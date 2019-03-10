@@ -539,7 +539,7 @@ class BasePlugin:
         if nbtemps > 0:
             self.intemp = round(sum(listintemps) / nbtemps, 1)
             # update the dummy device showing the current thermostat temp
-            Devices[6].Update(nValue=0, sValue=str(self.intemp), TimeOut=False)
+            Devices[6].Update(nValue=0, sValue=str(self.intemp), TimedOut=False)
             if self.intemperror:  # there was previously an invalid inside temperature reading... reset to normal
                 self.intemperror = False
                 self.WriteLog("Inside Temperature reading is now valid again: Resuming normal operation", "Status")
