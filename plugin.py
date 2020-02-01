@@ -4,63 +4,10 @@ Author: Logread,
         adapted from the Vera plugin by Antor, see:
             http://www.antor.fr/apps/smart-virtual-thermostat-eng-2/?lang=en
             https://github.com/AntorFr/SmartVT
-Version:    0.0.1: alpha
-            0.0.2: beta, with new connection object from Domoticz Python plugin framework
-            0.0.3: bug fixes + added thermostat temp update even if in Off or Forced modes
-            0.0.4: more logging parameters
-            0.1.0: Use the standard urllib.request module to call the Domoticz API due to ongoing changes to
-                    the Domoticz.Connection method
-            0.1.1: Address strange behavior of python plugin framework where no more than a couple of devices can be
-                    created and updated in one pass in the same function... so devices are created in "OnStart()" as
-                    required but are only updated after all required devices are created
-            0.2.0: First incremental update:
-                    - Code cleanup for calls to Domoticz API
-                    - Timeout for temperature sensors, based on Domoticz preferences setting
-            0.2.1: Fixed possible TypeError in datetime.strptime method in embedded Python
-                    (known python 3.x bug, see https://bugs.python.org/issue27400)
-            0.3.0: Fixed major bug in auto-learning + cosmetic improvements
-            0.3.1: Force immediate recalculation when setpoint changes
-            0.3.2: fix bug where thermostat might still switch on despite no valid inside temperature
-            0.3.3: various improvements:
-                    - end of heating cycle code adjusted to avoid potentially damaging quick off/on to the heater(s)
-                    - fix start up sequence to kill heating if mode is off in case heating was manually on beforehand
-                    - ensure heating is killed if invalid temperature reading (v.s. just setting mode to off)
-            0.3.4: immediate recalculation if mode changed (and skip learning since incomplete cycle).
-                    Thanks to domoticz forum user @Electrocut
-            0.3.5: fixed bug if calculated power is below minimum power
-                    Thanks to domoticz forum user @napo7
-            0.3.6: fixed bug causing auto learning to fail if no outside temp is provided
-                    Thanks to domoticz forum user @etampes
-            0.3.7: changed the logic for minimum power: apply minimum power even if no heating needed (useful for
-                    very high thermal inertia systems like heating floors that work better if kept warm enough)
-                    Thanks to domoticz forum user @napo7
-            0.3.8: minor improvements to thermostat temperature update logic, some code cleanup
-            0.3.9: GitHub contribution from @SoaR245: add support for domoticz webserver authentication if enabled
-            0.4.0: unpublished version (test of Domoticz.Connection method vs. urllib.request)
-            0.4.1: Cumulative update:
-                   (1) add option to force or not minimum heating per cycle even if target temperature
-                       is already reached (thanks to domoticz forum user @jake)
-                   (2) check heater(s) switch status before an update to avoid issuing uncessary switching commands
-                       (thanks to domoticz forum user @jake)
-                   (3) some minor error checks added when parsing parameters at startup
-                   (4) implement new debugging levels introduced by @dnpwwo
-                   (5) some code cleanup and optimization
-            0.4.2: Unpublished test
-            0.4.3: Call domoticz json API at least every 5 minutes to avoid the 10 mins timout of connections that
-                    floods domoticz's log with "Incoming Connection from ...." messages. Take advantage of this to
-                    update the temperature readings more often than upon each calculation
-            0.4.4: implement list of active/dead sensors to avoid continuous logging of dead sensors,
-            		also added some ´fool proof´ error handlers based on users feedback
-            0.4.5: adjust uservariable creation to breaking change introduced by domoticz version 4.10298
-                    thanks to GitHub contributor @informagico
-            0.4.6: some clean up of logging levels (accept older versions of domoticz) and variables scoping/typing
-            0.4.7: slight adjustement to verbose logging to reduce clutter
-            0.4.8: change behavior if no valid inside temperature reading: switch heating off instead of switching
-                    the thermostat off... then if and when there is a valid temperature the thermostat resumes work
-                    Thanks to GitHub user @Kptn77 for suggestion.
+Version: 0.4.9 (February 1, 2010) - see history.txt for versions history
 """
 """
-<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.8" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
+<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.9" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
     <description>
         <h2>Smart Virtual Thermostat</h2><br/>
         Easily implement in Domoticz an advanced virtual thermostat based on time modulation<br/>
@@ -84,7 +31,7 @@ Version:    0.0.1: alpha
                 <option label="always" value="Forced"/>
             </options>
         </param> 
-        <param field="Mode5" label="Calculation cycle, Minimum Heating time per cycle, Pause On delay, Pause Off delay, Forced mode duration (all in minutes)" width="200px" required="true" default="30,0,2,1,60"/>
+        <param field="Mode5" label="Calc. cycle, Min. Heating time /cycle, Pause On delay, Pause Off delay, Forced mode duration (all in minutes)" width="200px" required="true" default="30,0,2,1,60"/>
         <param field="Mode6" label="Logging Level" width="200px">
             <options>
                 <option label="Normal" value="Normal"  default="true"/>
@@ -102,8 +49,7 @@ Version:    0.0.1: alpha
 """
 import Domoticz
 import json
-import urllib.parse as parse
-import urllib.request as request
+from urllib import parse, request
 from datetime import datetime, timedelta
 import time
 import base64
@@ -458,7 +404,8 @@ class BasePlugin:
                                              (self.Internals['nbCC'] + 1), 1)
             self.Internals['nbCC'] = min(self.Internals['nbCC'] + 1, 50)
             self.WriteLog("ConstC updated to {}".format(self.Internals['ConstC']), "Verbose")
-        elif self.outtemp is not None and self.Internals['LastSetPoint'] > self.Internals['LastOutT']:
+        elif (self.outtemp is not None and self.Internals['LastOutT'] is not None) and \
+                 self.Internals['LastSetPoint'] > self.Internals['LastOutT']:
             # learning ConstT
             ConstT = (self.Internals['ConstT'] + ((self.Internals['LastSetPoint'] - self.intemp) /
                                                   (self.Internals['LastSetPoint'] - self.Internals['LastOutT']) *
