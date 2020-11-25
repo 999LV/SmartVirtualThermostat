@@ -4,10 +4,10 @@ Author: Logread,
         adapted from the Vera plugin by Antor, see:
             http://www.antor.fr/apps/smart-virtual-thermostat-eng-2/?lang=en
             https://github.com/AntorFr/SmartVT
-Version: 0.4.9 (February 1, 2010) - see history.txt for versions history
+Version: 0.4.10 (November 25, 2020) - see history.txt for versions history
 """
 """
-<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.9" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
+<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.10" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
     <description>
         <h2>Smart Virtual Thermostat</h2><br/>
         Easily implement in Domoticz an advanced virtual thermostat based on time modulation<br/>
@@ -194,9 +194,9 @@ class BasePlugin:
             self.pauseondelay = CheckParam("Pause On Delay", params[2], 2)
             self.pauseoffdelay = CheckParam("Pause Off Delay", params[3], 0)
             self.forcedduration = CheckParam("Forced Mode Duration", params[4], 60)
-            if self.forcedduration < 30:
-                Domoticz.Error("Invalid forced mode duration parameter. Using minimum of 30 minutes !")
-                self.calculate_period = 30
+            if self.forcedduration < 15:
+                Domoticz.Error("Invalid forced mode duration parameter. Using minimum of 15 minutes !")
+                self.forcedduration = 15
         else:
             Domoticz.Error("Error reading Mode5 parameters")
 
