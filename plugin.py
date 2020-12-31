@@ -5,6 +5,10 @@ Author: Logread,
             http://www.antor.fr/apps/smart-virtual-thermostat-eng-2/?lang=en
             https://github.com/AntorFr/SmartVT
 Version: 0.4.10 (November 25, 2020) - see history.txt for versions history
+
+Branch to be used with 433MHz-driven heaters:
+- Inverts the ON/OFF order (Simple 433MHz switch on pilot wire gives inverted order)
+- Sends the switching orders even if the state of the switch hasn't changed. This is to prevent locking situations when one order was missed (heater remains stuck ON or OFF)
 """
 """
 <plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.10" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
@@ -430,7 +434,7 @@ class BasePlugin:
                 idx = int(device["idx"])
                 if idx in self.Heaters:  # this switch is one of our heaters
                     if "Status" in device:
-                        switches[idx] = True if device["Status"] == "On" else False
+                        switches[idx] = True if device["Status"] == "Off" else False    # Order inverted !
                         Domoticz.Debug("Heater switch {} currently is '{}'".format(idx, device["Status"]))
                     else:
                         Domoticz.Error("Device with idx={} does not seem to be a switch !".format(idx))
@@ -442,10 +446,10 @@ class BasePlugin:
 
         # flip on / off as needed
         self.heat = switch
-        command = "On" if switch else "Off"
+        command = "On" if not(switch) else "Off"   # Order inverted !
         Domoticz.Debug("Heating '{}'".format(command))
         for idx in self.Heaters:
-            if switches[idx] != switch:  # check if action needed
+            if True:  # Always send order to the heater. This is to prevent lockup with non-acknowledged systems
                 DomoticzAPI("type=command&param=switchlight&idx={}&switchcmd={}".format(idx, command))
         if switch:
             Domoticz.Debug("End Heat time = " + str(self.endheat))
