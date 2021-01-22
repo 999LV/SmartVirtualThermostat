@@ -1,6 +1,4 @@
 
-var address = "192.168.154.21";
-var port = 8080
 var hardwareReq = "/json.htm?type=hardware";
 var tempReq = "/json.htm?type=graph&sensor=temp&range=day&idx=";
 var switchReq = "/json.htm?type=lightlog&idx=";
