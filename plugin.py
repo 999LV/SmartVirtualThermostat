@@ -54,6 +54,8 @@ from datetime import datetime, timedelta
 import time
 import base64
 import itertools
+import os
+from shutil import copy2, rmtree
 from distutils.version import LooseVersion
 
 class deviceparam:
@@ -111,7 +113,7 @@ class BasePlugin:
 
 
     def onStart(self):
-
+        self.install()
         # setup the appropriate logging level
         try:
             debuglevel = int(Parameters["Mode6"])
@@ -215,9 +217,24 @@ class BasePlugin:
 
 
     def onStop(self):
-
         Domoticz.Debugging(0)
 
+
+    def install(self):
+        Domoticz.Log('Installing plugin custom page...')
+
+        try:
+            source_path = os.path.dirname(os.path.abspath(__file__)) + '/viewer'
+            templates_path = os.path.abspath(source_path + '/../../../www/templates')
+
+            Domoticz.Debug('Copying files from ' + source_path + ' to ' + templates_path)
+
+            copy2(source_path + '/Smart Thermostats.html', templates_path)
+            copy2(source_path + '/svt_viewer.js', templates_path)
+
+            Domoticz.Log('Installing plugin custom page completed.')
+        except Exception as e:
+            Domoticz.Error('Error during installing plugin custom page: ' + repr(e))
 
     def onCommand(self, Unit, Command, Level, Color):
 
