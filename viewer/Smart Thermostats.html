@@ -1,0 +1,154 @@
+
+	<script src="templates/svt_viewer.js"></script>
+	<div id="svt_content"/>
+	<script>
+	var address = window.location.hostname;
+	var port = window.location.port
+
+	
+	function download(filename, text) {
+		var element = document.createElement('a');
+		element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+		element.setAttribute('download', filename);
+
+		element.style.display = 'none';
+		document.body.appendChild(element);
+
+		element.click();
+
+		document.body.removeChild(element);
+	}
+	function showUsageChart(data, i) {
+		var chartElement = $('#graph'+i);
+		
+		var series = [];
+
+		series.push({
+			name: 'Temp In',
+			color: 'rgba(160,30,52,0.8)',
+			yAxis: 0,
+			data: data.tempIn.map(function (item) {
+				return {
+					x: +(new Date(item.d)),
+					y: item.te
+				}
+			})
+		});
+		if(data.tempOut != undefined) {
+			series.push({
+				name: 'Temp Out',
+				color: 'rgba(60,130,252,0.8)',
+				yAxis: 0,
+				data: data.tempOut.map(function (item) {
+					return {
+						x: +(new Date(item.d)),
+						y: item.te
+					}
+				})
+			});
+		}
+		series.push({
+			name: 'Set point',
+			color: 'rgba(60,230,52,0.8)',
+			yAxis: 0,
+			data: data.setpoint.map(function (item) {
+				return {
+					x: +(new Date(item.d)),
+					y: item.te
+				}
+			})
+		});
+		series.push({
+			name: 'Heater',
+			color: 'rgba(210,200,51,0.8)',
+			yAxis: 1,
+			step: true,
+			data: data.heater.historic.map(function (item) {
+				return {
+					x: +(new Date(item.Date)),
+					y: (item.Data=="On" || item.Data.startsWith("Set Level"))?((item.Level==undefined)?100:(item.Level>100?100:item.Level)):0
+				}
+			})
+		});
+		console.log(series);
+		chartElement.highcharts({
+			chart: {
+				zoomType: 'x'
+			},
+			title: {
+				text: ''
+			},
+			xAxis: {
+				type: 'datetime',
+				minTickInterval: 24 * 3600 * 1000
+			},
+			yAxis: [
+				{
+					title: {
+						text: 'Temp (°C)'
+					},
+					maxPadding: 0
+				},
+				{
+					title: {
+						text: 'Heater (%)'
+					},
+					maxPadding: 0
+				}
+
+			],
+			tooltip: {
+				formatter: function () {
+					return Highcharts.dateFormat('%Y-%m-%d %H:%M', this.x) + '<br/>' + this.series.name + ': ' + Highcharts.numberFormat(this.y,1);
+				}
+			},
+			plotOptions: {
+				column: {
+					minPointLength: 4,
+					pointPadding: 0.1,
+					groupPadding: 0,
+					dataLabels: {
+						enabled: true,
+						color: 'white',
+						format: '{y} °C'
+					}
+				},
+				series: {
+					turboThreshold : 0
+				}
+			},
+			legend: {
+				enabled: true
+			},
+			series: series
+		});
+	}
+	var ths=getThermostats();
+	var askJSON = getRequestParam("thermostatHistory");
+	if(askJSON != undefined) {
+		var th = ths.filter((t) => t.name == askJSON);
+		if(th.length > 0) {
+			var s = JSON.stringify(ths[0]);
+			download(ths[0].name+'_'+new Date().yyyymmdd_hhmm(), s);
+		}
+	} else {
+		for(var i=0;i<ths.length;i++) {
+			var element = document.createElement('h1');
+			element.innerText = ths[i].name;
+			document.getElementById('svt_content').appendChild(element);
+			element = document.createElement('div');
+			element.setAttribute('class', 'device-log-chart');
+			element.setAttribute('id', 'graph'+i);
+			document.getElementById('svt_content').appendChild(element);
+			showUsageChart(ths[i], i);
+			
+			var s = JSON.stringify(ths[i]);
+			element = document.createElement('input');
+			element.setAttribute('type', 'button');
+			element.setAttribute('onclick', 'download(\''+ths[i].name+'_'+new Date().yyyymmdd_hhmm()+'\', \''+s+'\')');
+			element.setAttribute('value', 'Download');
+			//element.innerText = "Download";
+			document.getElementById('svt_content').appendChild(element);
+		}
+	}
+	</script>
