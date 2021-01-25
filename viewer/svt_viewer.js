@@ -40,7 +40,7 @@ function getRequestParam(name){
 		return decodeURIComponent(name[1]);
 }
 function getThermostats() {
-	var request="http://"+address + ":" + port.toString() + hardwareReq;
+	var request=proto+address + ":" + port.toString() + hardwareReq;
 	var thermostats = [];
 	$.ajax({url: request,
 		async: false,
@@ -57,7 +57,7 @@ function getThermostats() {
 					thermostat.name = name;
 					thermostat.id = result.result[i].idx;
 					var minDate = 0;
-					var request="http://"+address + ":" + port.toString() + tempReq + tempInIdxs[0];
+					var request=proto+address + ":" + port.toString() + tempReq + tempInIdxs[0];
 					$.ajax({url: request,
 						async: false,
 						success: function(resultTemp){
@@ -71,7 +71,7 @@ function getThermostats() {
 						}
 					});
 					if(tempOutIdx != undefined && tempOutIdx >= 0) {
-						request="http://"+address + ":" + port.toString() + tempReq + tempOutIdx;
+						request=proto+address + ":" + port.toString() + tempReq + tempOutIdx;
 						$.ajax({url: request,
 							async: false,
 							success: function(resultTemp){
@@ -86,7 +86,7 @@ function getThermostats() {
 							}
 						});
 					}
-					request="http://"+address + ":" + port.toString() + switchReq + heatIdxs[0];
+					request=proto+address + ":" + port.toString() + switchReq + heatIdxs[0];
 					$.ajax({url: request,
 						async: false,
 						success: function(resultTemp){
@@ -95,13 +95,13 @@ function getThermostats() {
 							thermostat.heater.historic = resultTemp.result.filter(item => new Date(item.Date).getTime() >= minDate).sort((a,b)=>new Date(a.Date).getTime()>new Date(b.Date).getTime());
 						}
 					});
-					request="http://"+address + ":" + port.toString() + devicesReq;
+					request=proto+address + ":" + port.toString() + devicesReq;
 					$.ajax({url: request,
 						async: false,
 						success: function(resultTemp){
 							for(var j=0;j<resultTemp.result.length;j++) {
 								if(thermostat.id == resultTemp.result[j].HardwareID && resultTemp.result[j].Unit == 4) {
-									request="http://"+address + ":" + port.toString() + tempReq + resultTemp.result[j].idx;
+									request=proto+address + ":" + port.toString() + tempReq + resultTemp.result[j].idx;
 									$.ajax({url: request,
 										async: false,
 										success: function(resultTemp2){
