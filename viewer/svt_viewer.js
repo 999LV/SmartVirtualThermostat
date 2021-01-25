@@ -15,6 +15,7 @@ class Thermostat {
 class Heater {
 	constructor() {
 		this.historic=undefined;
+		this.isDimmer=false;
 	}
 }
 Date.prototype.yyyymmdd_hhmm = function() {
@@ -92,6 +93,7 @@ function getThermostats() {
 						success: function(resultTemp){
 							console.log(resultTemp);
 							thermostat.heater = new Heater();
+							thermostat.heater.isDimmer = resultTemp.HaveDimmer;
 							thermostat.heater.historic = resultTemp.result.filter(item => new Date(item.Date).getTime() >= minDate).sort((a,b)=>new Date(a.Date).getTime()>new Date(b.Date).getTime());
 						}
 					});
