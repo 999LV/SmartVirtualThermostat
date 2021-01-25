@@ -66,11 +66,11 @@
 			data: data.heater.historic.map(function (item) {
 				return {
 					x: +(new Date(item.Date)),
-					y: (item.Data=="On" || item.Data.startsWith("Set Level"))?((item.Level==undefined)?100:(item.Level>100?100:item.Level)):0
+					y: (item.Data=="On" || item.Data.startsWith("Set Level"))?((!data.heater.isDimmer)?100:(item.Level>100?100:item.Level)):0
 				}
 			})
 		});
-		console.log(series);
+		//console.log(series);
 		chartElement.highcharts({
 			chart: {
 				zoomType: 'x'
