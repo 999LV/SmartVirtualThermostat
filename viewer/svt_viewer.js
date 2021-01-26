@@ -93,7 +93,7 @@ function getThermostats() {
 						success: function(resultTemp){
 							//console.log(resultTemp);
 							thermostat.heater = new Heater();
-							thermostat.heater.isDimmer = resultTemp.HaveDimmer;
+							//thermostat.heater.isDimmer = resultTemp.HaveDimmer; // not working, HaveDimmer always true
 							thermostat.heater.historic = resultTemp.result.filter(item => new Date(item.Date).getTime() >= minDate).sort((a,b)=>new Date(a.Date).getTime()>new Date(b.Date).getTime());
 						}
 					});
