@@ -163,6 +163,10 @@ class BasePlugin:
         if 6 not in Devices:
             Domoticz.Device(Name="Thermostat temp", Unit=6, TypeName="Temperature").Create()
             devicecreated.append(deviceparam(6, 0, "20"))  # default is 20 degrees
+        if 7 not in Devices:
+            Domoticz.Device(Name="Power", Unit=7, Type=243, Subtype=6, Used=0, Description="Power percentage calculated this period").Create()
+            devicecreated.append(deviceparam(7, 0, "0"))  # default is 0 percent
+
 
         # if any device has been created in onStart(), now is time to update its defaults
         for device in devicecreated:
@@ -245,7 +249,7 @@ class BasePlugin:
         now = datetime.now()
         
         # fool proof checking.... based on users feedback
-        if not all(device in Devices for device in (1,2,3,4,5,6)):
+        if not all(device in Devices for device in (1,2,3,4,5,6,7)):
             Domoticz.Error("one or more devices required by the plugin is/are missing, please check domoticz device creation settings and restart !")
             return
 
@@ -359,6 +363,7 @@ class BasePlugin:
                 "Calculated power is {}, applying minimum power of {}".format(power, self.minheatpower), "Verbose")
             power = self.minheatpower
 
+        Devices[7].Update(nValue=Devices[7].nValue, sValue=str(power), TimedOut=False)
         heatduration = round(power * self.calculate_period / 100)
         self.WriteLog("Calculation: Power = {} -> heat duration = {} minutes".format(power, heatduration), "Verbose")
 
