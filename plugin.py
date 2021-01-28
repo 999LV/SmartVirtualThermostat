@@ -71,7 +71,7 @@ class BasePlugin:
         self.debug = False
         self.calculate_period = 30  # Time in minutes between two calculations (cycle)
         self.minheatpower = 0  # if heating is needed, minimum heat power (in % of calculation period)
-        self.deltamax = 0.2  # allowed temp excess over setpoint temperature
+        self.deltamax = 0.1  # allowed temp excess over setpoint temperature
         self.pauseondelay = 2  # time between pause sensor actuation and actual pause
         self.pauseoffdelay = 1  # time between end of pause sensor actuation and end of actual pause
         self.forcedduration = 60  # time in minutes for the forced mode
@@ -336,21 +336,22 @@ class BasePlugin:
 
         self.WriteLog("Temperatures: Inside = {} / Outside = {}".format(self.intemp, self.outtemp), "Verbose")
 
+        if self.learn:
+            self.AutoCallib()
+        else:
+            self.learn = True
+			
         if self.intemp > self.setpoint + self.deltamax:
             self.WriteLog("Temperature exceeds setpoint", "Verbose")
             overshoot = True
             power = 0
         else:
             overshoot = False
-            if self.learn:
-                self.AutoCallib()
-            else:
-                self.learn = True
             if self.outtemp is None:
-                power = round((self.setpoint - self.intemp) * self.Internals["ConstC"], 1)
+                power = round((self.setpoint - self.intemp) * self.Internals["ConstC"], 2)
             else:
                 power = round((self.setpoint - self.intemp) * self.Internals["ConstC"] +
-                              (self.setpoint - self.outtemp) * self.Internals["ConstT"], 1)
+                              (self.setpoint - self.outtemp) * self.Internals["ConstT"], 2)
 
         if power < 0:
             power = 0  # lower limit
@@ -364,7 +365,7 @@ class BasePlugin:
             power = self.minheatpower
 
         Devices[7].Update(nValue=Devices[7].nValue, sValue=str(power), TimedOut=False)
-        heatduration = round(power * self.calculate_period / 100)
+        heatduration = round(power * self.calculate_period / 100, 1)
         self.WriteLog("Calculation: Power = {} -> heat duration = {} minutes".format(power, heatduration), "Verbose")
 
         if power == 0:
@@ -406,7 +407,7 @@ class BasePlugin:
                                                    (self.calculate_period * 60))))
             self.WriteLog("New calc for ConstC = {}".format(ConstC), "Verbose")
             self.Internals['ConstC'] = round((self.Internals['ConstC'] * self.Internals['nbCC'] + ConstC) /
-                                             (self.Internals['nbCC'] + 1), 1)
+                                             (self.Internals['nbCC'] + 1), 2)
             self.Internals['nbCC'] = min(self.Internals['nbCC'] + 1, 50)
             self.WriteLog("ConstC updated to {}".format(self.Internals['ConstC']), "Verbose")
         elif (self.outtemp is not None and self.Internals['LastOutT'] is not None) and \
@@ -419,7 +420,7 @@ class BasePlugin:
                                                    (self.calculate_period * 60))))
             self.WriteLog("New calc for ConstT = {}".format(ConstT), "Verbose")
             self.Internals['ConstT'] = round((self.Internals['ConstT'] * self.Internals['nbCT'] + ConstT) /
-                                             (self.Internals['nbCT'] + 1), 1)
+                                             (self.Internals['nbCT'] + 1), 2)
             self.Internals['nbCT'] = min(self.Internals['nbCT'] + 1, 50)
             self.WriteLog("ConstT updated to {}".format(self.Internals['ConstT']), "Verbose")
 
