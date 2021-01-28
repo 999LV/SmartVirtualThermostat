@@ -15,6 +15,7 @@ class Thermostat {
 class Heater {
 	constructor() {
 		this.historic=undefined;
+		this.isDimmer=false;
 	}
 }
 Date.prototype.yyyymmdd_hhmm = function() {
@@ -90,8 +91,9 @@ function getThermostats() {
 					$.ajax({url: request,
 						async: false,
 						success: function(resultTemp){
-							console.log(resultTemp);
+							//console.log(resultTemp);
 							thermostat.heater = new Heater();
+							//thermostat.heater.isDimmer = resultTemp.HaveDimmer; // not working, HaveDimmer always true
 							thermostat.heater.historic = resultTemp.result.filter(item => new Date(item.Date).getTime() >= minDate).sort((a,b)=>new Date(a.Date).getTime()>new Date(b.Date).getTime());
 						}
 					});
@@ -109,7 +111,9 @@ function getThermostats() {
 											thermostat.setpoint = resultTemp2.result;
 										}
 									});
-									
+								}
+								if(heatIdxs[0] == resultTemp.result[j].idx) {
+									thermostat.heater.isDimmer = resultTemp.result[j].SwitchType == "Dimmer";
 								}
 							}
 						}
