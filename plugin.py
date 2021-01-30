@@ -71,6 +71,7 @@ class BasePlugin:
         self.now = datetime.now()
         self.debug = False
         self.calculate_period = 30  # Time in minutes between two calculations (cycle)
+        self.num_periods = 50  # The number of periods over which we learn the system characteristics.
         self.minheatpower = 0  # if heating is needed, minimum heat power (in % of calculation period)
         self.deltamax = 2.0  # allowed temp excess over setpoint temperature
         self.pauseondelay = 2  # time between pause sensor actuation and actual pause
@@ -175,10 +176,13 @@ class BasePlugin:
 
         # build lists of sensors and switches
         self.InTempSensors = parseCSV(Parameters["Mode1"])
+        self.InTempSensors.sort()
         self.WriteLog("Inside Temperature sensors = {}".format(self.InTempSensors), "Verbose")
         self.OutTempSensors = parseCSV(Parameters["Mode2"])
+        self.OutTempSensors.sort()
         self.WriteLog("Outside Temperature sensors = {}".format(self.OutTempSensors), "Verbose")
         self.Heaters = parseCSV(Parameters["Mode3"])
+        self.Heaters.sort()
         self.WriteLog("Heaters = {}".format(self.Heaters), "Verbose")
         
         # build dict of status of all temp sensors to be used when handling timeouts
@@ -204,6 +208,9 @@ class BasePlugin:
                 self.forcedduration = 15
         else:
             Domoticz.Error("Error reading Mode5 parameters")
+
+        # calculate the number of periods if we want to average over a 2 days period.
+        self.num_periods = (2880 / self.calculate_period)
 
         # loads persistent variables from dedicated user variable
         # note: to reset the thermostat to default values (i.e. ignore all past learning),
@@ -407,9 +414,9 @@ class BasePlugin:
                                                       (timedelta.total_seconds(self.now - self.lastcalc) /
                                                        (self.calculate_period * 60))))
                 self.WriteLog("New calc for ConstC = {}".format(ConstC), "Verbose")
-                self.Internals['ConstC'] = round((self.Internals['ConstC'] * self.Internals['nbCC'] + ConstC) /
-                                                 (self.Internals['nbCC'] + 1), 2)
-                self.Internals['nbCC'] = min(self.Internals['nbCC'] + 1, 50)
+                self.Internals['ConstC'] = ((self.Internals['ConstC'] * self.Internals['nbCC'] + ConstC) /
+                                                 (self.Internals['nbCC'] + 1))
+                self.Internals['nbCC'] = min(self.Internals['nbCC'] + 1, self.num_periods)
                 self.WriteLog("ConstC updated to {}".format(self.Internals['ConstC']), "Verbose")
         elif (self.outtemp is not None and self.Internals['LastOutT'] is not None):
             if self.Internals['LastSetPoint'] > self.Internals['LastOutT']:
@@ -420,9 +427,9 @@ class BasePlugin:
                                                       (timedelta.total_seconds(self.now - self.lastcalc) /
                                                        (self.calculate_period * 60))))
                 self.WriteLog("New calc for ConstT = {}".format(ConstT), "Verbose")
-                self.Internals['ConstT'] = round((self.Internals['ConstT'] * self.Internals['nbCT'] + ConstT) /
-                                                 (self.Internals['nbCT'] + 1), 2)
-                self.Internals['nbCT'] = min(self.Internals['nbCT'] + 1, 50)
+                self.Internals['ConstT'] = ((self.Internals['ConstT'] * self.Internals['nbCT'] + ConstT) /
+                                                 (self.Internals['nbCT'] + 1))
+                self.Internals['nbCT'] = min(self.Internals['nbCT'] + 1, self.num_periods)
                 self.WriteLog("ConstT updated to {}".format(self.Internals['ConstT']), "Verbose")
 
 
@@ -469,24 +476,26 @@ class BasePlugin:
         listouttemps = []
         devicesAPI = DomoticzAPI("type=devices&filter=temp&used=true&order=Name")
         if devicesAPI:
-            for device in devicesAPI["result"]:  # parse the devices for temperature sensors
-                idx = int(device["idx"])
-                if idx in self.InTempSensors:
-                    if "Temp" in device:
-                        Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
-                        # check temp sensor is not timed out
-                        if not self.SensorTimedOut(idx, device["Name"], device["LastUpdate"]):
-                            listintemps.append(device["Temp"])
-                    else:
-                        Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
-                elif idx in self.OutTempSensors:
-                    if "Temp" in device:
-                        Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
-                        # check temp sensor is not timed out
-                        if not self.SensorTimedOut(idx, device["Name"], device["LastUpdate"]):
-                            listouttemps.append(device["Temp"])
-                    else:
-                        Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
+            for idx in self.InTempSensors:
+                for device in devicesAPI["result"]:  # parse the devices for temperature sensors
+                    if idx == int(device["idx"]):
+                        if "Temp" in device:
+                            Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
+                            # check temp sensor is not timed out
+                            if not self.SensorTimedOut(idx, device["Name"], device["LastUpdate"]):
+                                listintemps.append(device["Temp"])
+                        else:
+                            Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
+            for idx in self.OutTempSensors:
+                for device in devicesAPI["result"]:  # parse the devices for temperature sensors
+                    if idx == int(device["idx"]):
+                        if "Temp" in device:
+                            Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
+                            # check temp sensor is not timed out
+                            if not self.SensorTimedOut(idx, device["Name"], device["LastUpdate"]):
+                                listouttemps.append(device["Temp"])
+                        else:
+                            Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
 
         # calculate the average inside temperature
         nbtemps = len(listintemps)
