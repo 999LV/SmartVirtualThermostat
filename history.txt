@@ -58,11 +58,7 @@ Version history Smart Virtual Thermostat:
         minor code cleanup + move version history from plugin.py to history.txt file
 0.4.10 (November 25, 2020):
         bugfix on setting minimum force mode duration (thanks to domoticz forum user mash47)
-0.4.11  (January 29, 2021): rrozema
-        bugfixes for:
-		(1) also learn when overshot (to improve learning rate)
-		(2) always use the same time per heartbeat (fixes inprecision in time calculations)
-		(3) increase precision of learn values to 2 decimals (fixes rounding issues)
-		(4) also learn when Tin matches setpoint (fixes we only go up, never down)
-		(5) increased maxdelta so we don't cut off the learning process to soon (fixes power going to 0 
-		       all the time, which causes uncomfortable long times without heating)
+0.4.11 (January 23, 2021):
+        Contribution for @ultrasuperpingu on GitHub: add custom page to domoticz UI to display plugin
+        statistics. To implement, copy files in the domoticz/plugins/SVT/viewer/ folder to the
+        domoticz/www/templates/ folder and reload/restart domoticz.
