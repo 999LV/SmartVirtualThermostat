@@ -209,8 +209,8 @@ class BasePlugin:
         else:
             Domoticz.Error("Error reading Mode5 parameters")
 
-        # calculate the number of periods if we want to average over a 2 days period.
-        self.num_periods = (2880 / self.calculate_period)
+        # calculate the number of periods if we want to average over a 6 hours period.
+        self.num_periods = (360 / self.calculate_period)
 
         # loads persistent variables from dedicated user variable
         # note: to reset the thermostat to default values (i.e. ignore all past learning),
@@ -359,7 +359,7 @@ class BasePlugin:
                 power = round((self.setpoint - min(self.intemp, self.setpoint)) * self.Internals["ConstC"], 2)
             else:
                 power = round((self.setpoint - min(self.intemp, self.setpoint)) * self.Internals["ConstC"] +
-                              (self.setpoint - min(self.outtemp, self.setpoint)) * self.Internals["ConstT"], 2)
+                              (self.outtemp - self.intemp) * self.Internals["ConstT"], 2)
 
         if power < 0:
             power = 0  # lower limit
@@ -376,9 +376,9 @@ class BasePlugin:
         heatduration = round(power * self.calculate_period / 100, 1)
         self.WriteLog("Calculation: Power = {} -> heat duration = {} minutes".format(power, heatduration), "Verbose")
 
-        if power == 0:
+        if power <= 0:
             self.switchHeat(False)
-            Domoticz.Debug("No heating requested !")
+            Domoticz.Debug("No heating requested.")
         else:
             self.endheat = self.now + timedelta(minutes=heatduration)
             Domoticz.Debug("End Heat time = " + str(self.endheat))
@@ -406,33 +406,34 @@ class BasePlugin:
             # heater was on max but setpoint was not reached... no learning
             Domoticz.Debug("Last power was 100% but setpoint not reached... no callibration")
             pass
-        elif self.Internals['LastSetPoint'] > self.Internals['LastInT']:
-            if self.intemp > self.Internals['LastInT']:
+        elif not self.Internals['LastInT'] > self.Internals['LastSetPoint'] + self.deltamax:
+            # heater was on, lets see what the result of our attempt was
+            if self.intemp != self.Internals['LastInT']:  # if not spot on, calculate a new ConstC so we can do better next time.
                 # learning ConstC
                 ConstC = (self.Internals['ConstC'] * ((self.Internals['LastSetPoint'] - self.Internals['LastInT']) /
                                                       (self.intemp - self.Internals['LastInT']) *
                                                       (timedelta.total_seconds(self.now - self.lastcalc) /
                                                        (self.calculate_period * 60))))
                 self.WriteLog("New calc for ConstC = {}".format(ConstC), "Verbose")
-                self.Internals['ConstC'] = ((self.Internals['ConstC'] * self.Internals['nbCC'] + ConstC) /
-                                                 (self.Internals['nbCC'] + 1))
+                self.Internals['ConstC'] = (self.Internals['ConstC'] * self.Internals['nbCC'] + ConstC) / (self.Internals['nbCC'] + 1)
                 self.Internals['nbCC'] = min(self.Internals['nbCC'] + 1, self.num_periods)
                 self.WriteLog("ConstC updated to {}".format(self.Internals['ConstC']), "Verbose")
-        elif (self.outtemp is not None and self.Internals['LastOutT'] is not None):
-            if self.Internals['LastSetPoint'] > self.Internals['LastOutT']:
+        elif not (self.outtemp is None or self.Internals['LastOutT'] is None):
+            # heater was not on and we have the required information: a reading of the current outside temperature 
+            # plus its last read value. This is an opportunity to learn how the outside temperature affects our heatloss.
+            if self.Internals['LastInT'] != self.Internals['LastOutT']:
                 # learning ConstT
-                ConstT = (self.Internals['ConstT'] + ((self.Internals['LastSetPoint'] - self.intemp) /
-                                                      (self.Internals['LastSetPoint'] - self.Internals['LastOutT']) *
+                ConstT = (self.Internals['ConstT'] * ((self.Internals['LastInT'] - self.Internals['LastOutT']) /
+                                                      (self.intemp - self.outemp) *
                                                       self.Internals['ConstC'] *
                                                       (timedelta.total_seconds(self.now - self.lastcalc) /
                                                        (self.calculate_period * 60))))
                 self.WriteLog("New calc for ConstT = {}".format(ConstT), "Verbose")
-                self.Internals['ConstT'] = ((self.Internals['ConstT'] * self.Internals['nbCT'] + ConstT) /
-                                                 (self.Internals['nbCT'] + 1))
+                self.Internals['ConstT'] = (self.Internals['ConstT'] * self.Internals['nbCT'] + ConstT) / (self.Internals['nbCT'] + 1)
                 self.Internals['nbCT'] = min(self.Internals['nbCT'] + 1, self.num_periods)
                 self.WriteLog("ConstT updated to {}".format(self.Internals['ConstT']), "Verbose")
-
-
+    
+    
     def switchHeat(self, switch):
 
         # Build list of heater switches, with their current status,
