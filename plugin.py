@@ -1,10 +1,10 @@
 """
 Smart Virtual Thermostat python plugin for Domoticz
-Author: Logread, rrozema
+Author: Logread,
         adapted from the Vera plugin by Antor, see:
             http://www.antor.fr/apps/smart-virtual-thermostat-eng-2/?lang=en
             https://github.com/AntorFr/SmartVT
-Version: 0.4.11 (January 29, 2020) - see history.txt for versions history
+Version: 0.4.10 (November 25, 2020) - see history.txt for versions history
 """
 """
 <plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.11" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
@@ -27,7 +27,7 @@ Version: 0.4.11 (January 29, 2020) - see history.txt for versions history
         <param field="Mode3" label="Heating Switches (csv list of idx)" width="100px" required="true" default="0"/>
         <param field="Mode4" label="Apply minimum heating per cycle" width="200px">
             <options>
-				<option label="only when heating required" value="Normal"  default="true" />
+                <option label="only when heating required" value="Normal"  default="true" />
                 <option label="always" value="Forced"/>
             </options>
         </param> 
@@ -346,22 +346,21 @@ class BasePlugin:
 
         self.WriteLog("Temperatures: Inside = {} / Outside = {}".format(self.intemp, self.outtemp), "Verbose")
 
-        if self.learn:
-            self.AutoCallib()
-        else:
-            self.learn = True
-
         if self.intemp > self.setpoint + self.deltamax:
             self.WriteLog("Temperature exceeds setpoint", "Verbose")
             overshoot = True
             power = 0
         else:
             overshoot = False
-            if self.outtemp is None:
-                power = round((self.setpoint - min(self.intemp, self.setpoint)) * self.Internals["ConstC"], 2)
+            if self.learn:
+                self.AutoCallib()
             else:
-                power = round((self.setpoint - min(self.intemp, self.setpoint)) * self.Internals["ConstC"] +
-                              (self.outtemp - self.intemp) * self.Internals["ConstT"], 2)
+                self.learn = True
+            if self.outtemp is None:
+                power = round((self.setpoint - self.intemp) * self.Internals["ConstC"], 1)
+            else:
+                power = round((self.setpoint - self.intemp) * self.Internals["ConstC"] +
+                              (self.setpoint - self.outtemp) * self.Internals["ConstT"], 1)
 
         if power < 0:
             power = 0  # lower limit
@@ -375,7 +374,7 @@ class BasePlugin:
             power = self.minheatpower
 
         Devices[7].Update(nValue=Devices[7].nValue, sValue=str(power), TimedOut=False)
-        heatduration = round(power * self.calculate_period / 100, 1)
+        heatduration = round(power * self.calculate_period / 100)
         self.WriteLog("Calculation: Power = {} -> heat duration = {} minutes".format(power, heatduration), "Verbose")
 
         if power <= 0:
@@ -408,34 +407,32 @@ class BasePlugin:
             # heater was on max but setpoint was not reached... no learning
             Domoticz.Debug("Last power was 100% but setpoint not reached... no callibration")
             pass
-        elif not self.Internals['LastInT'] > self.Internals['LastSetPoint'] + self.deltamax:
-            # heater was on, lets see what the result of our attempt was
-            if self.intemp != self.Internals['LastInT']:  # if not spot on, calculate a new ConstC so we can do better next time.
-                # learning ConstC
-                ConstC = (self.Internals['ConstC'] * ((self.Internals['LastSetPoint'] - self.Internals['LastInT']) /
-                                                      (self.intemp - self.Internals['LastInT']) *
-                                                      (timedelta.total_seconds(self.now - self.lastcalc) /
-                                                       (self.calculate_period * 60))))
-                self.WriteLog("New calc for ConstC = {}".format(ConstC), "Verbose")
-                self.Internals['ConstC'] = (self.Internals['ConstC'] * self.Internals['nbCC'] + ConstC) / (self.Internals['nbCC'] + 1)
-                self.Internals['nbCC'] = min(self.Internals['nbCC'] + 1, self.num_periods)
-                self.WriteLog("ConstC updated to {}".format(self.Internals['ConstC']), "Verbose")
-        elif not (self.outtemp is None or self.Internals['LastOutT'] is None):
-            # heater was not on and we have the required information: a reading of the current outside temperature 
-            # plus its last read value. This is an opportunity to learn how the outside temperature affects our heatloss.
-            if self.Internals['LastInT'] != self.Internals['LastOutT']:
-                # learning ConstT
-                ConstT = (self.Internals['ConstT'] * ((self.Internals['LastInT'] - self.Internals['LastOutT']) /
-                                                      (self.intemp - self.outemp) *
-                                                      self.Internals['ConstC'] *
-                                                      (timedelta.total_seconds(self.now - self.lastcalc) /
-                                                       (self.calculate_period * 60))))
-                self.WriteLog("New calc for ConstT = {}".format(ConstT), "Verbose")
-                self.Internals['ConstT'] = (self.Internals['ConstT'] * self.Internals['nbCT'] + ConstT) / (self.Internals['nbCT'] + 1)
-                self.Internals['nbCT'] = min(self.Internals['nbCT'] + 1, self.num_periods)
-                self.WriteLog("ConstT updated to {}".format(self.Internals['ConstT']), "Verbose")
-    
-    
+        elif self.intemp > self.Internals['LastInT'] and self.Internals['LastSetPoint'] > self.Internals['LastInT']:
+            # learning ConstC
+            ConstC = (self.Internals['ConstC'] * ((self.Internals['LastSetPoint'] - self.Internals['LastInT']) /
+                                                  (self.intemp - self.Internals['LastInT']) *
+                                                  (timedelta.total_seconds(self.now - self.lastcalc) /
+                                                   (self.calculate_period * 60))))
+            self.WriteLog("New calc for ConstC = {}".format(ConstC), "Verbose")
+            self.Internals['ConstC'] = round((self.Internals['ConstC'] * self.Internals['nbCC'] + ConstC) /
+                                             (self.Internals['nbCC'] + 1), 1)
+            self.Internals['nbCC'] = min(self.Internals['nbCC'] + 1, 50)
+            self.WriteLog("ConstC updated to {}".format(self.Internals['ConstC']), "Verbose")
+        elif (self.outtemp is not None and self.Internals['LastOutT'] is not None) and \
+                 self.Internals['LastSetPoint'] > self.Internals['LastOutT']:
+            # learning ConstT
+            ConstT = (self.Internals['ConstT'] + ((self.Internals['LastSetPoint'] - self.intemp) /
+                                                  (self.Internals['LastSetPoint'] - self.Internals['LastOutT']) *
+                                                  self.Internals['ConstC'] *
+                                                  (timedelta.total_seconds(self.now - self.lastcalc) /
+                                                   (self.calculate_period * 60))))
+            self.WriteLog("New calc for ConstT = {}".format(ConstT), "Verbose")
+            self.Internals['ConstT'] = round((self.Internals['ConstT'] * self.Internals['nbCT'] + ConstT) /
+                                             (self.Internals['nbCT'] + 1), 1)
+            self.Internals['nbCT'] = min(self.Internals['nbCT'] + 1, 50)
+            self.WriteLog("ConstT updated to {}".format(self.Internals['ConstT']), "Verbose")
+
+
     def switchHeat(self, switch):
 
         # Build list of heater switches, with their current status,
