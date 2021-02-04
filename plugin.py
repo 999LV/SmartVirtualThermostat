@@ -31,7 +31,7 @@ Version: 0.4.11 (January 29, 2020) - see history.txt for versions history
                 <option label="always" value="Forced"/>
             </options>
         </param> 
-        <param field="Mode5" label="Calc. cycle, Min. Heating time /cycle, Pause On delay, Pause Off delay, Forced mode duration (all in minutes)" width="200px" required="true" default="30,0,2,1,60"/>
+        <param field="Mode5" label="Calc. cycle, Min. Heating time /cycle, Pause On delay, Pause Off delay, Forced mode duration (all in minutes), Delta max (°C)" width="200px" required="true" default="30,0,2,1,60,0.2"/>
         <param field="Mode6" label="Logging Level" width="200px">
             <options>
                 <option label="Normal" value="Normal"  default="true"/>
@@ -113,7 +113,6 @@ class BasePlugin:
 
 
     def onStart(self):
-
         # setup the appropriate logging level
         try:
             debuglevel = int(Parameters["Mode6"])
@@ -161,7 +160,7 @@ class BasePlugin:
             devicecreated.append(deviceparam(4, 0, "20"))  # default is 20 degrees
         if 5 not in Devices:
             Domoticz.Device(Name="Setpoint Economy", Unit=5, Type=242, Subtype=1, Used=1).Create()
-            devicecreated.append(deviceparam(5 ,0, "20"))  # default is 20 degrees
+            devicecreated.append(deviceparam(5 ,0, "17"))  # default is 17 degrees
         if 6 not in Devices:
             Domoticz.Device(Name="Thermostat temp", Unit=6, TypeName="Temperature").Create()
             devicecreated.append(deviceparam(6, 0, "20"))  # default is 20 degrees
@@ -191,7 +190,7 @@ class BasePlugin:
 
         # splits additional parameters
         params = parseCSV(Parameters["Mode5"])
-        if len(params) == 5:
+        if len(params) == 5 or len(params) == 6:
             self.calculate_period = CheckParam("Calculation Period", params[0], 30)
             if self.calculate_period < 5:
                 Domoticz.Error("Invalid calculation period parameter. Using minimum of 5 minutes !")
@@ -206,6 +205,10 @@ class BasePlugin:
             if self.forcedduration < 15:
                 Domoticz.Error("Invalid forced mode duration parameter. Using minimum of 15 minutes !")
                 self.forcedduration = 15
+            if len(params) > 5:
+                self.deltamax = CheckParam("Delta max", params[5], 0.2)
+            else:
+                Domoticz.Error("Delta max missing in parameters. Add the field in the plugin configuration (default value=0.2)")
         else:
             Domoticz.Error("Error reading Mode5 parameters")
 
@@ -223,7 +226,6 @@ class BasePlugin:
 
 
     def onStop(self):
-
         Domoticz.Debugging(0)
 
 
@@ -654,13 +656,18 @@ def onHeartbeat():
 def parseCSV(strCSV):
 
     listvals = []
+    i=0
     for value in strCSV.split(","):
         try:
-            val = int(value)
+            if i == 5:
+                val = float(value)
+            else:
+                val = int(value)
         except:
             pass
         else:
             listvals.append(val)
+        i+=1
     return listvals
 
 
@@ -691,10 +698,11 @@ def DomoticzAPI(APICall):
 
 
 def CheckParam(name, value, default):
-
-    try:
-        param = int(value)
-    except ValueError:
+    if type(default) is int and type(value) is int:
+        param = value
+    elif type(default) is float and type(value) is float:
+        param = value
+    else:
         param = default
         Domoticz.Error("Parameter '{}' has an invalid value of '{}' ! defaut of '{}' is instead used.".format(name, value, default))
     return param
