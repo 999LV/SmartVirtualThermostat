@@ -53,6 +53,7 @@ function getThermostats() {
 					var tempOut = undefined;
 					var tempInIdxs = result.result[i].Mode1.split(',');
 					var tempOutIdx = result.result[i].Mode2;
+					var tempOutIdxs = result.result[i].Mode2.split(',');
 					var heatIdxs = result.result[i].Mode3.split(',');
 					var name = result.result[i].Name;
 					thermostat.name = name;
@@ -71,8 +72,8 @@ function getThermostats() {
 							);
 						}
 					});
-					if(tempOutIdx != undefined && tempOutIdx >= 0) {
-						request=proto+address + ":" + port.toString() + tempReq + tempOutIdx;
+					if(tempOutIdx != undefined && tempOutIdxs[0] >= 0) {
+						request=proto+address + ":" + port.toString() + tempReq + tempOutIdxs[0];
 						$.ajax({url: request,
 							async: false,
 							success: function(resultTemp){
@@ -94,7 +95,12 @@ function getThermostats() {
 							//console.log(resultTemp);
 							thermostat.heater = new Heater();
 							//thermostat.heater.isDimmer = resultTemp.HaveDimmer; // not working, HaveDimmer always true
-							thermostat.heater.historic = resultTemp.result.filter(item => new Date(item.Date).getTime() >= minDate).sort((a,b)=>new Date(a.Date).getTime()>new Date(b.Date).getTime());
+							try {
+								thermostat.heater.historic = resultTemp.result.filter(item => new Date(item.Date).getTime() >= minDate).sort((a,b)=>new Date(a.Date).getTime()>new Date(b.Date).getTime());
+							}
+							catch( err ) {
+								thermostat.heater.historic = undefined
+							}
 						}
 					});
 					request=proto+address + ":" + port.toString() + devicesReq;
@@ -112,11 +118,23 @@ function getThermostats() {
 										}
 									});
 								}
+								if(thermostat.id == resultTemp.result[j].HardwareID && resultTemp.result[j].Unit == 6) {
+									tempInIdxs[0] = resultTemp.result[j].idx;
+								}
 								if(heatIdxs[0] == resultTemp.result[j].idx) {
 									thermostat.heater.isDimmer = resultTemp.result[j].SwitchType == "Dimmer";
 								}
 							}
 						}
+					});
+					request=proto+address + ":" + port.toString() + tempReq + tempInIdxs[0];
+					$.ajax({url: request,
+						async: false,
+						success: function(resultTemp){
+								if( resultTemp.result != undefined ) {
+									thermostat.tempIn = resultTemp.result;
+								}
+							}
 					});
 					thermostats.push(thermostat);
 				}
