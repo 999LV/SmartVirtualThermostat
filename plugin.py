@@ -31,7 +31,7 @@ Version: 0.4.10 (November 25, 2020) - see history.txt for versions history
                 <option label="always" value="Forced"/>
             </options>
         </param> 
-        <param field="Mode5" label="Calc. cycle, Min. Heating time /cycle, Pause On delay, Pause Off delay, Forced mode duration (all in minutes), Delta max (°C)" width="200px" required="true" default="30,0,2,1,60,0.2"/>
+        <param field="Mode5" label="Calc. cycle, Min. Heating time /cycle, Pause On delay, Pause Off delay, Forced mode duration (all in minutes), Delta max (Â°C)" width="200px" required="true" default="30,0,2,1,60,0.2"/>
         <param field="Mode6" label="Logging Level" width="200px">
             <options>
                 <option label="Normal" value="Normal"  default="true"/>
@@ -426,7 +426,7 @@ class BasePlugin:
         # Build list of heater switches, with their current status,
         # to be used to check if any of the heaters is already in desired state
         switches = {}
-        devicesAPI = DomoticzAPI("type=devices&filter=light&used=true&order=Name")
+        devicesAPI = DomoticzAPI("type=command&param=getdevices&filter=light&used=true&order=Name")
         if devicesAPI:
             for device in devicesAPI["result"]:  # parse the switch device
                 idx = int(device["idx"])
@@ -462,7 +462,7 @@ class BasePlugin:
         noerror = True
         listintemps = []
         listouttemps = []
-        devicesAPI = DomoticzAPI("type=devices&filter=temp&used=true&order=Name")
+        devicesAPI = DomoticzAPI("type=command&param=getdevices&filter=temp&used=true&order=Name")
         if devicesAPI:
             for device in devicesAPI["result"]:  # parse the devices for temperature sensors
                 idx = int(device["idx"])
