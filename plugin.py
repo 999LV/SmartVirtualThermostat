@@ -31,7 +31,7 @@ Version: 0.4.10 (November 25, 2020) - see history.txt for versions history
                 <option label="always" value="Forced"/>
             </options>
         </param> 
-        <param field="Mode5" label="Calc. cycle, Min. Heating time /cycle, Pause On delay, Pause Off delay, Forced mode duration (all in minutes), Delta max (Â°C)" width="200px" required="true" default="30,0,2,1,60,0.2"/>
+        <param field="Mode5" label="Calc. cycle, Min. Heating time /cycle, Pause On delay, Pause Off delay, Forced mode duration (all in minutes), Delta max (°C)" width="200px" required="true" default="30,0,2,1,60,0.2"/>
         <param field="Mode6" label="Logging Level" width="200px">
             <options>
                 <option label="Normal" value="Normal"  default="true"/>
