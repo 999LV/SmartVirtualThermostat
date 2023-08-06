@@ -29,8 +29,11 @@
 			color: 'rgba(160,30,52,0.8)',
 			yAxis: 0,
 			data: data.tempIn.map(function (item) {
+				var origDate 	= new Date( item.d );
+				var tzOffset    = origDate.getTimezoneOffset() / 60;
+				var offsetDate	= new Date( origDate.getFullYear(), origDate.getMonth(), origDate.getDate(), origDate.getHours() - tzOffset, origDate.getMinutes() );
 				return {
-					x: +(new Date(item.d)),
+					x: +( offsetDate ),
 					y: item.te
 				}
 			})
@@ -41,8 +44,11 @@
 				color: 'rgba(60,130,252,0.8)',
 				yAxis: 0,
 				data: data.tempOut.map(function (item) {
+					var origDate 	= new Date( item.d );
+					var tzOffset    = origDate.getTimezoneOffset() / 60;
+					var offsetDate	= new Date( origDate.getFullYear(), origDate.getMonth(), origDate.getDate(), origDate.getHours() - tzOffset, origDate.getMinutes() );
 					return {
-						x: +(new Date(item.d)),
+						x: +( offsetDate ),
 						y: item.te
 					}
 				})
@@ -53,24 +59,35 @@
 			color: 'rgba(60,230,52,0.8)',
 			yAxis: 0,
 			data: data.setpoint.map(function (item) {
+				var origDate 	= new Date( item.d );
+				var tzOffset    = origDate.getTimezoneOffset() / 60;
+				var offsetDate	= new Date( origDate.getFullYear(), origDate.getMonth(), origDate.getDate(), origDate.getHours() - tzOffset, origDate.getMinutes() );
 				return {
-					x: +(new Date(item.d)),
+					x: +( offsetDate ),
 					y: item.te
 				}
 			})
 		});
-		series.push({
-			name: 'Heater',
-			color: 'rgba(210,200,51,0.8)',
-			yAxis: 1,
-			step: true,
-			data: data.heater.historic.map(function (item) {
-				return {
-					x: +(new Date(item.Date)),
-					y: (item.Data=="On" || item.Data.startsWith("Set Level"))?((!data.heater.isDimmer)?100:(item.Level>100?100:item.Level)):0
-				}
-			})
-		});
+		if( data.heater.historic != undefined ) {
+			series.push({
+				name: 'Heater',
+				color: 'rgba(210,200,51,0.8)',
+				yAxis: 1,
+				step: true,
+				data: data.heater.historic.map(function (item) {
+
+					var origDate 	= new Date( item.Date );
+					var tzOffset    = origDate.getTimezoneOffset() / 60;
+					var offsetDate	= new Date( origDate.getFullYear(), origDate.getMonth(), origDate.getDate(), origDate.getHours() - tzOffset, origDate.getMinutes() );
+						return {
+							x: +( offsetDate ),
+							y: (item.Data=="On" || item.Data.startsWith("Set Level"))?((!data.heater.isDimmer)?0:(item.Level>100?0:100 - item.Level)):100
+						}
+					})
+				});
+		}
+
+
 		//console.log(series);
 		chartElement.highcharts({
 			chart: {
@@ -141,15 +158,20 @@
 			element.setAttribute('class', 'device-log-chart');
 			element.setAttribute('id', 'graph'+i);
 			document.getElementById('svt_content').appendChild(element);
-			showUsageChart(ths[i], i);
-			
-			var s = JSON.stringify(ths[i]);
-			element = document.createElement('input');
-			element.setAttribute('type', 'button');
-			element.setAttribute('onclick', 'download(\''+ths[i].name+'_'+new Date().yyyymmdd_hhmm()+'\', \''+s+'\')');
-			element.setAttribute('value', 'Download');
-			//element.innerText = "Download";
-			document.getElementById('svt_content').appendChild(element);
+			try {
+				showUsageChart(ths[i], i);
+	    
+				var s = JSON.stringify(ths[i]);
+				element = document.createElement('input');
+				element.setAttribute('type', 'button');
+				element.setAttribute('onclick', 'download(\''+ths[i].name+'_'+new Date().yyyymmdd_hhmm()+'\', \''+s+'\')');
+				element.setAttribute('value', 'Download');
+				//element.innerText = "Download";
+				document.getElementById('svt_content').appendChild(element);
+			}
+			catch(err) {
+				document.getElementById( 'graph'+i ).innerHTML = "Data not available ( " + err.message + " )";
+			}
 		}
 	}
 	</script>
