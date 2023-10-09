@@ -27,7 +27,7 @@ Version: 0.4.10 (November 25, 2020) - see history.txt for versions history
         <param field="Mode3" label="Heating Switches (csv list of idx)" width="100px" required="true" default="0"/>
         <param field="Mode4" label="Apply minimum heating per cycle" width="200px">
             <options>
-				<option label="ony when heating required" value="Normal"  default="true" />
+                <option label="only when heating required" value="Normal"  default="true" />
                 <option label="always" value="Forced"/>
             </options>
         </param> 
@@ -68,10 +68,12 @@ class BasePlugin:
 
     def __init__(self):
 
+        self.now = datetime.now()
         self.debug = False
         self.calculate_period = 30  # Time in minutes between two calculations (cycle)
+        self.num_periods = 50  # The number of periods over which we learn the system characteristics.
         self.minheatpower = 0  # if heating is needed, minimum heat power (in % of calculation period)
-        self.deltamax = 0.2  # allowed temp excess over setpoint temperature
+        self.deltamax = 2.0  # allowed temp excess over setpoint temperature
         self.pauseondelay = 2  # time between pause sensor actuation and actual pause
         self.pauseoffdelay = 1  # time between end of pause sensor actuation and end of actual pause
         self.forcedduration = 60  # time in minutes for the forced mode
@@ -93,12 +95,12 @@ class BasePlugin:
         self.heat = False
         self.pause = False
         self.pauserequested = False
-        self.pauserequestchangedtime = datetime.now()
+        self.pauserequestchangedtime = self.now
         self.forced = False
         self.intemp = 20.0
         self.outtemp = 20.0
         self.setpoint = 20.0
-        self.endheat = datetime.now()
+        self.endheat = self.now
         self.nextcalc = self.endheat
         self.lastcalc = self.endheat
         self.nextupdate = self.endheat
@@ -162,6 +164,10 @@ class BasePlugin:
         if 6 not in Devices:
             Domoticz.Device(Name="Thermostat temp", Unit=6, TypeName="Temperature").Create()
             devicecreated.append(deviceparam(6, 0, "20"))  # default is 20 degrees
+        if 7 not in Devices:
+            Domoticz.Device(Name="Power", Unit=7, Type=243, Subtype=6, Used=0, Description="Power percentage calculated this period").Create()
+            devicecreated.append(deviceparam(7, 0, "0"))  # default is 0 percent
+
 
         # if any device has been created in onStart(), now is time to update its defaults
         for device in devicecreated:
@@ -169,10 +175,13 @@ class BasePlugin:
 
         # build lists of sensors and switches
         self.InTempSensors = parseCSV(Parameters["Mode1"])
+        self.InTempSensors.sort()
         self.WriteLog("Inside Temperature sensors = {}".format(self.InTempSensors), "Verbose")
         self.OutTempSensors = parseCSV(Parameters["Mode2"])
+        self.OutTempSensors.sort()
         self.WriteLog("Outside Temperature sensors = {}".format(self.OutTempSensors), "Verbose")
         self.Heaters = parseCSV(Parameters["Mode3"])
+        self.Heaters.sort()
         self.WriteLog("Heaters = {}".format(self.Heaters), "Verbose")
         
         # build dict of status of all temp sensors to be used when handling timeouts
@@ -202,6 +211,9 @@ class BasePlugin:
                 Domoticz.Error("Delta max missing in parameters. Add the field in the plugin configuration (default value=0.2)")
         else:
             Domoticz.Error("Error reading Mode5 parameters")
+
+        # calculate the number of periods if we want to average over a 6 hours period.
+        self.num_periods = (360 / self.calculate_period)
 
         # loads persistent variables from dedicated user variable
         # note: to reset the thermostat to default values (i.e. ignore all past learning),
@@ -244,31 +256,31 @@ class BasePlugin:
 
     def onHeartbeat(self):
 
-        now = datetime.now()
+        self.now = datetime.now()
         
         # fool proof checking.... based on users feedback
-        if not all(device in Devices for device in (1,2,3,4,5,6)):
+        if not all(device in Devices for device in (1,2,3,4,5,6,7)):
             Domoticz.Error("one or more devices required by the plugin is/are missing, please check domoticz device creation settings and restart !")
             return
 
         if Devices[1].sValue == "0":  # Thermostat is off
             if self.forced or self.heat:  # thermostat setting was just changed so we kill the heating
                 self.forced = False
-                self.endheat = now
+                self.endheat = self.now
                 Domoticz.Debug("Switching heat Off !")
                 self.switchHeat(False)
 
         elif Devices[1].sValue == "20":  # Thermostat is in forced mode
             if self.forced:
-                if self.endheat <= now:
+                if self.endheat <= self.now:
                     self.forced = False
-                    self.endheat = now
+                    self.endheat = self.now
                     Domoticz.Debug("Forced mode Off !")
                     Devices[1].Update(nValue=1, sValue="10")  # set thermostat to normal mode
                     self.switchHeat(False)
             else:
                 self.forced = True
-                self.endheat = now + timedelta(minutes=self.forcedduration)
+                self.endheat = self.now + timedelta(minutes=self.forcedduration)
                 Domoticz.Debug("Forced mode On !")
                 self.switchHeat(True)
 
@@ -276,13 +288,13 @@ class BasePlugin:
 
             if self.forced:  # thermostat setting was just changed from "forced" so we kill the forced mode
                 self.forced = False
-                self.endheat = now
-                self.nextcalc = now   # this will force a recalculation on next heartbeat
+                self.endheat = self.now
+                self.nextcalc = self.now   # this will force a recalculation on next heartbeat
                 Domoticz.Debug("Forced mode Off !")
                 self.switchHeat(False)
 
-            elif (self.endheat <= now or self.pause) and self.heat:  # heat cycle is over
-                self.endheat = now
+            elif (self.endheat <= self.now or self.pause) and self.heat:  # heat cycle is over
+                self.endheat = self.now
                 self.heat = False
                 if self.Internals['LastPwr'] < 100:
                     self.switchHeat(False)
@@ -290,18 +302,18 @@ class BasePlugin:
                 # to switch off in order to avoid potentially damaging quick off/on cycles to the heater(s)
 
             elif self.pause and not self.pauserequested:  # we are in pause and the pause switch is now off
-                if self.pauserequestchangedtime + timedelta(minutes=self.pauseoffdelay) <= now:
+                if self.pauserequestchangedtime + timedelta(minutes=self.pauseoffdelay) <= self.now:
                     self.WriteLog("Pause is now Off", "Status")
                     self.pause = False
 
             elif not self.pause and self.pauserequested:  # we are not in pause and the pause switch is now on
-                if self.pauserequestchangedtime + timedelta(minutes=self.pauseondelay) <= now:
+                if self.pauserequestchangedtime + timedelta(minutes=self.pauseondelay) <= self.now:
                     self.WriteLog("Pause is now On", "Status")
                     self.pause = True
                     self.switchHeat(False)
 
-            elif (self.nextcalc <= now) and not self.pause:  # we start a new calculation
-                self.nextcalc = now + timedelta(minutes=self.calculate_period)
+            elif (self.nextcalc <= self.now) and not self.pause:  # we start a new calculation
+                self.nextcalc = self.now + timedelta(minutes=self.calculate_period)
                 self.WriteLog("Next calculation time will be : " + str(self.nextcalc), "Verbose")
 
                 # make current setpoint used in calculation reflect the select mode (10= normal, 20 = economy)
@@ -318,14 +330,14 @@ class BasePlugin:
                     # make sure we switch off heating if there was an error with reading the temp
                     self.switchHeat(False)
 
-        if self.nexttemps <= now:
+        if self.nexttemps <= self.now:
             # call the Domoticz json API for a temperature devices update, to get the lastest temps (and avoid the
             # connection time out time after 10mins that floods domoticz logs in versions of domoticz since spring 2018)
             self.readTemps()
 
         # check if need to refresh setpoints so that they do not turn red in GUI
-        if self.nextupdate <= now:
-            self.nextupdate = now + timedelta(minutes=int(Settings["SensorTimeout"]))
+        if self.nextupdate <= self.now:
+            self.nextupdate = self.now + timedelta(minutes=int(Settings["SensorTimeout"]))
             Devices[4].Update(nValue=0, sValue=Devices[4].sValue)
             Devices[5].Update(nValue=0, sValue=Devices[5].sValue)
 
@@ -356,19 +368,20 @@ class BasePlugin:
             power = 100  # upper limit
 
         # apply minimum power as required
-        if power <= self.minheatpower and (Parameters["Mode4"] == "Forced" or not overshoot):
+        if power < self.minheatpower and (Parameters["Mode4"] == "Forced" or not overshoot):
             self.WriteLog(
                 "Calculated power is {}, applying minimum power of {}".format(power, self.minheatpower), "Verbose")
             power = self.minheatpower
 
+        Devices[7].Update(nValue=Devices[7].nValue, sValue=str(power), TimedOut=False)
         heatduration = round(power * self.calculate_period / 100)
         self.WriteLog("Calculation: Power = {} -> heat duration = {} minutes".format(power, heatduration), "Verbose")
 
-        if power == 0:
+        if power <= 0:
             self.switchHeat(False)
-            Domoticz.Debug("No heating requested !")
+            Domoticz.Debug("No heating requested.")
         else:
-            self.endheat = datetime.now() + timedelta(minutes=heatduration)
+            self.endheat = self.now + timedelta(minutes=heatduration)
             Domoticz.Debug("End Heat time = " + str(self.endheat))
             self.switchHeat(True)
             if self.Internals["ALStatus"] < 2:
@@ -379,12 +392,11 @@ class BasePlugin:
                 self.Internals['ALStatus'] = 1
                 self.saveUserVar()  # update user variables with latest learning
 
-        self.lastcalc = datetime.now()
+        self.lastcalc = self.now
 
 
     def AutoCallib(self):
 
-        now = datetime.now()
         if self.Internals['ALStatus'] != 1:  # not initalized... do nothing
             Domoticz.Debug("Fist pass at AutoCallib... no callibration")
             pass
@@ -399,7 +411,7 @@ class BasePlugin:
             # learning ConstC
             ConstC = (self.Internals['ConstC'] * ((self.Internals['LastSetPoint'] - self.Internals['LastInT']) /
                                                   (self.intemp - self.Internals['LastInT']) *
-                                                  (timedelta.total_seconds(now - self.lastcalc) /
+                                                  (timedelta.total_seconds(self.now - self.lastcalc) /
                                                    (self.calculate_period * 60))))
             self.WriteLog("New calc for ConstC = {}".format(ConstC), "Verbose")
             self.Internals['ConstC'] = round((self.Internals['ConstC'] * self.Internals['nbCC'] + ConstC) /
@@ -412,7 +424,7 @@ class BasePlugin:
             ConstT = (self.Internals['ConstT'] + ((self.Internals['LastSetPoint'] - self.intemp) /
                                                   (self.Internals['LastSetPoint'] - self.Internals['LastOutT']) *
                                                   self.Internals['ConstC'] *
-                                                  (timedelta.total_seconds(now - self.lastcalc) /
+                                                  (timedelta.total_seconds(self.now - self.lastcalc) /
                                                    (self.calculate_period * 60))))
             self.WriteLog("New calc for ConstT = {}".format(ConstT), "Verbose")
             self.Internals['ConstT'] = round((self.Internals['ConstT'] * self.Internals['nbCT'] + ConstT) /
@@ -456,7 +468,7 @@ class BasePlugin:
     def readTemps(self):
 
         # set update flag for next temp update
-        self.nexttemps = datetime.now() + timedelta(minutes=5)
+        self.nexttemps = self.now + timedelta(minutes=5)
 
         # fetch all the devices from the API and scan for sensors
         noerror = True
@@ -464,24 +476,26 @@ class BasePlugin:
         listouttemps = []
         devicesAPI = DomoticzAPI("type=command&param=getdevices&filter=temp&used=true&order=Name")
         if devicesAPI:
-            for device in devicesAPI["result"]:  # parse the devices for temperature sensors
-                idx = int(device["idx"])
-                if idx in self.InTempSensors:
-                    if "Temp" in device:
-                        Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
-                        # check temp sensor is not timed out
-                        if not self.SensorTimedOut(idx, device["Name"], device["LastUpdate"]):
-                            listintemps.append(device["Temp"])
-                    else:
-                        Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
-                elif idx in self.OutTempSensors:
-                    if "Temp" in device:
-                        Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
-                        # check temp sensor is not timed out
-                        if not self.SensorTimedOut(idx, device["Name"], device["LastUpdate"]):
-                            listouttemps.append(device["Temp"])
-                    else:
-                        Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
+            for idx in self.InTempSensors:
+                for device in devicesAPI["result"]:  # parse the devices for temperature sensors
+                    if idx == int(device["idx"]):
+                        if "Temp" in device:
+                            Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
+                            # check temp sensor is not timed out
+                            if not self.SensorTimedOut(idx, device["Name"], device["LastUpdate"]):
+                                listintemps.append(device["Temp"])
+                        else:
+                            Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
+            for idx in self.OutTempSensors:
+                for device in devicesAPI["result"]:  # parse the devices for temperature sensors
+                    if idx == int(device["idx"]):
+                        if "Temp" in device:
+                            Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
+                            # check temp sensor is not timed out
+                            if not self.SensorTimedOut(idx, device["Name"], device["LastUpdate"]):
+                                listouttemps.append(device["Temp"])
+                        else:
+                            Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
 
         # calculate the average inside temperature
         nbtemps = len(listintemps)
@@ -595,7 +609,7 @@ class BasePlugin:
                 result = datetime(*(time.strptime(datestring, dateformat)[0:6]))
             return result
 
-        timedout = LastUpdate(datestring) + timedelta(minutes=int(Settings["SensorTimeout"])) < datetime.now()
+        timedout = LastUpdate(datestring) + timedelta(minutes=int(Settings["SensorTimeout"])) < self.now
 
         # handle logging of time outs... only log when status changes (less clutter in logs)
         if timedout:
