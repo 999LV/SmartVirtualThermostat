@@ -58,7 +58,10 @@ Version history Smart Virtual Thermostat:
         minor code cleanup + move version history from plugin.py to history.txt file
 0.4.10 (November 25, 2020):
         bugfix on setting minimum force mode duration (thanks to domoticz forum user mash47)
-0.4.11 (January 23, 2021):
-        Contribution for @ultrasuperpingu on GitHub: add custom page to domoticz UI to display plugin
-        statistics. To implement, copy files in the domoticz/plugins/SVT/viewer/ folder to the
-        domoticz/www/templates/ folder and reload/restart domoticz.
+0.4.11 (January 2023):
+        minor bugfixes)
+0.4.12 (September 2023):
+        accept various pull requests on GitHub (thanks to contributors),
+        including incorporating changes made to the API in Domoticz version 2023.2
+0.4.13 (November 5, 2023)
+        incorporate "turbo" mode for testing

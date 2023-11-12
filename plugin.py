@@ -4,10 +4,10 @@ Author: Logread,
         adapted from the Vera plugin by Antor, see:
             http://www.antor.fr/apps/smart-virtual-thermostat-eng-2/?lang=en
             https://github.com/AntorFr/SmartVT
-Version: 0.4.10 (November 25, 2020) - see history.txt for versions history
+Version: 0.4.13 (November 5, 2023) - see history.txt for versions history
 """
 """
-<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.11" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
+<plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.12" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
     <description>
         <h2>Smart Virtual Thermostat</h2><br/>
         Easily implement in Domoticz an advanced virtual thermostat based on time modulation<br/>
@@ -54,7 +54,7 @@ from datetime import datetime, timedelta
 import time
 import base64
 import itertools
-from distutils.version import LooseVersion
+
 
 class deviceparam:
 
@@ -95,6 +95,8 @@ class BasePlugin:
         self.pauserequested = False
         self.pauserequestchangedtime = datetime.now()
         self.forced = False
+        self.boost = True  # boost heating when boostgap is reached
+        self.boostgap = 0.5  # gap in °C between inside temp and setpoint above which turbo mode is active
         self.intemp = 20.0
         self.outtemp = 20.0
         self.setpoint = 20.0
@@ -105,12 +107,13 @@ class BasePlugin:
         self.nexttemps = self.endheat
         self.learn = True
         self.loglevel = None
-        self.statussupported = True
         self.intemperror = False
+        self.versionsupported = False
         return
 
 
     def onStart(self):
+
         # setup the appropriate logging level
         try:
             debuglevel = int(Parameters["Mode6"])
@@ -126,11 +129,15 @@ class BasePlugin:
             self.debug = False
             Domoticz.Debugging(0)
 
-        # check if the host domoticz version supports the Domoticz.Status() python framework function
-        try:
-            Domoticz.Status("This version of domoticz allows status logging by the plugin (in verbose mode)")
-        except Exception:
-            self.statussupported = False
+        # check if the host domoticz version can run the plugin
+        versionstr = Parameters["DomoticzVersion"]
+        versionmajor = int(versionstr.split(".")[0])
+        versionminor = int(versionstr.split(".")[1])
+        if versionmajor >= 2023 and versionminor >= 2:
+            self.versionsupported = True
+        else:
+            Domoticz.Error("Minimum domoticz version is 2023.2")
+            return
 
         # create the child devices if these do not exist yet
         devicecreated = []
@@ -158,7 +165,7 @@ class BasePlugin:
             devicecreated.append(deviceparam(4, 0, "20"))  # default is 20 degrees
         if 5 not in Devices:
             Domoticz.Device(Name="Setpoint Economy", Unit=5, Type=242, Subtype=1, Used=1).Create()
-            devicecreated.append(deviceparam(5 ,0, "17"))  # default is 17 degrees
+            devicecreated.append(deviceparam(5 ,0, "20"))  # default is 20 degrees
         if 6 not in Devices:
             Domoticz.Device(Name="Thermostat temp", Unit=6, TypeName="Temperature").Create()
             devicecreated.append(deviceparam(6, 0, "20"))  # default is 20 degrees
@@ -214,12 +221,16 @@ class BasePlugin:
 
 
     def onStop(self):
+
         Domoticz.Debugging(0)
 
 
     def onCommand(self, Unit, Command, Level, Color):
 
         Domoticz.Debug("onCommand called for Unit {}: Command '{}', Level: {}".format(Unit, Command, Level))
+        # if host domoticz version is not OK than do nothing
+        if not self.versionsupported:
+            return
 
         if Unit == 3:  # pause switch
             self.pauserequestchangedtime = datetime.now()
@@ -244,8 +255,12 @@ class BasePlugin:
 
     def onHeartbeat(self):
 
+        # if host domoticz version is not OK than do nothing
+        if not self.versionsupported:
+            return
+
         now = datetime.now()
-        
+
         # fool proof checking.... based on users feedback
         if not all(device in Devices for device in (1,2,3,4,5,6)):
             Domoticz.Error("one or more devices required by the plugin is/are missing, please check domoticz device creation settings and restart !")
@@ -293,6 +308,7 @@ class BasePlugin:
                 if self.pauserequestchangedtime + timedelta(minutes=self.pauseoffdelay) <= now:
                     self.WriteLog("Pause is now Off", "Status")
                     self.pause = False
+                    self.nextcalc = now  # this will force a recalculation on the next heartbeat
 
             elif not self.pause and self.pauserequested:  # we are not in pause and the pause switch is now on
                 if self.pauserequestchangedtime + timedelta(minutes=self.pauseondelay) <= now:
@@ -361,6 +377,12 @@ class BasePlugin:
                 "Calculated power is {}, applying minimum power of {}".format(power, self.minheatpower), "Verbose")
             power = self.minheatpower
 
+        # apply full power if boostt mode and intemp is more than 1°C below setpoint
+        if self.boost and (self.setpoint - self.intemp) > self.boostgap:
+            self.WriteLog(
+                "Applying boost mode since current temperature is more than {}°C lower than setpoint".format(self.boostgap), "Verbose")
+            power = 100
+
         heatduration = round(power * self.calculate_period / 100)
         self.WriteLog("Calculation: Power = {} -> heat duration = {} minutes".format(power, heatduration), "Verbose")
 
@@ -371,11 +393,12 @@ class BasePlugin:
             self.endheat = datetime.now() + timedelta(minutes=heatduration)
             Domoticz.Debug("End Heat time = " + str(self.endheat))
             self.switchHeat(True)
-            if self.Internals["ALStatus"] < 2:
-                self.Internals['LastPwr'] = power
-                self.Internals['LastInT'] = self.intemp
-                self.Internals['LastOutT'] = self.outtemp
-                self.Internals['LastSetPoint'] = self.setpoint
+            #if self.Internals["ALStatus"] < 2:
+            self.Internals['LastPwr'] = power
+            self.Internals['LastInT'] = self.intemp
+            self.Internals['LastOutT'] = self.outtemp
+            self.Internals['LastSetPoint'] = self.setpoint
+            if self.Internals["ALStatus"] != 2:
                 self.Internals['ALStatus'] = 1
                 self.saveUserVar()  # update user variables with latest learning
 
@@ -534,26 +557,10 @@ class BasePlugin:
                         break
             if novar:
                 # create user variable since it does not exist
-                self.WriteLog("User Variable {} does not exist. Creation requested".format(varname), "Verbose")
-
-                #check for Domoticz version:
-                # there is a breaking change on dzvents_version 2.4.9, API was changed from 'saveuservariable' to 'adduservariable'
-                # using 'saveuservariable' on latest versions returns a "status = 'ERR'" error
-
-                # get a status of the actual running Domoticz instance, set the parameter accordigly
-                parameter = "saveuservariable"
-                domoticzInfo = DomoticzAPI("type=command&param=getversion")
-                if domoticzInfo is None:
-                    Domoticz.Error("Unable to fetch Domoticz info... unable to determine version")
-                else:
-                    if domoticzInfo and LooseVersion(domoticzInfo["dzvents_version"]) >= LooseVersion("2.4.9"):
-                        self.WriteLog("Use 'adduservariable' instead of 'saveuservariable'", "Verbose")
-                        parameter = "adduservariable"
-                
+                self.WriteLog("User Variable {} does not exist. Creating it.".format(varname), "Verbose")
                 # actually calling Domoticz API
-                DomoticzAPI("type=command&param={}&vname={}&vtype=2&vvalue={}".format(
-                    parameter, varname, str(self.InternalsDefaults)))
-                
+                DomoticzAPI("type=command&param=adduservariable&vname={}&vtype=2&vvalue={}".format(
+                    varname, str(self.InternalsDefaults)))
                 self.Internals = self.InternalsDefaults.copy()  # we re-initialize the internal variables
             else:
                 try:
@@ -576,10 +583,7 @@ class BasePlugin:
     def WriteLog(self, message, level="Normal"):
 
         if (self.loglevel == "Verbose" and level == "Verbose") or level == "Status":
-            if self.statussupported:
-                Domoticz.Status(message)
-            else:
-                Domoticz.Log(message)
+            Domoticz.Status(message)
         elif level == "Normal":
             Domoticz.Log(message)
 
