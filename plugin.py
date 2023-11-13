@@ -4,7 +4,7 @@ Author: Logread,
         adapted from the Vera plugin by Antor, see:
             http://www.antor.fr/apps/smart-virtual-thermostat-eng-2/?lang=en
             https://github.com/AntorFr/SmartVT
-Version: 0.4.13 (November 5, 2023) - see history.txt for versions history
+Version: 0.4.14 (November 13, 2023) - see history.txt for versions history
 """
 """
 <plugin key="SVT" name="Smart Virtual Thermostat" author="logread" version="0.4.12" wikilink="https://www.domoticz.com/wiki/Plugins/Smart_Virtual_Thermostat.html" externallink="https://github.com/999LV/SmartVirtualThermostat.git">
@@ -131,9 +131,8 @@ class BasePlugin:
 
         # check if the host domoticz version can run the plugin
         versionstr = Parameters["DomoticzVersion"]
-        versionmajor = int(versionstr.split(".")[0])
-        versionminor = int(versionstr.split(".")[1])
-        if versionmajor >= 2023 and versionminor >= 2:
+        version = float(versionstr.split(".")[0])
+        if version >= 2023.2:
             self.versionsupported = True
         else:
             Domoticz.Error("Minimum domoticz version is 2023.2")
