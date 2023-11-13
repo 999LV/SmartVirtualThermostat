@@ -65,3 +65,5 @@ Version history Smart Virtual Thermostat:
         including incorporating changes made to the API in Domoticz version 2023.2
 0.4.13 (November 5, 2023)
         incorporate "turbo" mode for testing
+0.4.14 (November 13, 2023)
+        fix domoticz version check bug. Thanks to GitHub user @fjumelle
