@@ -131,7 +131,7 @@ class BasePlugin:
 
         # check if the host domoticz version can run the plugin
         versionstr = Parameters["DomoticzVersion"]
-        version = float(versionstr.split(".")[0])
+        version = float(versionstr.split(" ")[0])
         if version >= 2023.2:
             self.versionsupported = True
         else:
