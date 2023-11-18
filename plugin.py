@@ -27,7 +27,7 @@ Version: 0.4.14 (November 13, 2023) - see history.txt for versions history
         <param field="Mode3" label="Heating Switches (csv list of idx)" width="100px" required="true" default="0"/>
         <param field="Mode4" label="Apply minimum heating per cycle" width="200px">
             <options>
-				<option label="ony when heating required" value="Normal"  default="true" />
+		<option label="only when heating required" value="Normal"  default="true" />
                 <option label="always" value="Forced"/>
             </options>
         </param> 
