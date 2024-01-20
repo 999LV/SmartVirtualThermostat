@@ -267,7 +267,7 @@ class BasePlugin:
             # Check if the setpoint is likely in Fahrenheit and convert to Celsius if necessary
             if self.systemTempUnit == "F":
                 # Convert to Celsius and round to two decimal places
-                setpoint = round((setpoint - 32) * (5.0 / 9.0), 2)
+                setpoint = round((setpoint - 32) * (5.0 / 9.0), 1)
                 Domoticz.Log("Setpoint is assumed to be in Fahrenheit, converting to Celsius: {}".format(setpoint))
 
             # Update the device with the new (converted) setpoint
@@ -515,20 +515,20 @@ class BasePlugin:
         if devicesAPI:
             for device in devicesAPI["result"]:  # parse the devices for temperature sensors
                 idx = int(device["idx"])
-                if idx in self.InTempSensors:
+                if idx in self.InTempSensors or idx in self.OutTempSensors:
                     if "Temp" in device:
-                        Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
+                        temp = device["Temp"]
+                        Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], temp))
+                        # Convert temperature from Fahrenheit to Celsius if systemTempUnit is "F"
+                        if self.systemTempUnit == "F":
+                            temp = round((temp - 32) * (5.0 / 9.0), 1)
+                            Domoticz.Debug("Converted temperature to Celsius: {}".format(temp))
                         # check temp sensor is not timed out
                         if not self.SensorTimedOut(idx, device["Name"], device["LastUpdate"]):
-                            listintemps.append(device["Temp"])
-                    else:
-                        Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
-                elif idx in self.OutTempSensors:
-                    if "Temp" in device:
-                        Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
-                        # check temp sensor is not timed out
-                        if not self.SensorTimedOut(idx, device["Name"], device["LastUpdate"]):
-                            listouttemps.append(device["Temp"])
+                            if idx in self.InTempSensors:
+                                listintemps.append(temp)
+                            elif idx in self.OutTempSensors:
+                                listouttemps.append(temp)
                     else:
                         Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
 
@@ -565,8 +565,7 @@ class BasePlugin:
         Domoticz.Debug("Inside Temperature = {}".format(self.intemp))
         Domoticz.Debug("Outside Temperature = {}".format(self.outtemp))
         return noerror
-
-
+        
     def getUserVar(self):
 
         variables = DomoticzAPI("type=command&param=getuservariables")
