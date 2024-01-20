@@ -96,10 +96,10 @@ class BasePlugin:
         self.pauserequestchangedtime = datetime.now()
         self.forced = False
         self.boost = True  # boost heating when boostgap is reached
-        self.boostgap = 0.5  # gap in °C between inside temp and t above which turbo mode is active
+        self.boostgap = 0.5  # gap in °C between inside temp and setpoint above which turbo mode is active
         self.intemp = 20.0
         self.outtemp = 20.0
-        self.t = 20.0
+        self.setpoint = 20.0
         self.endheat = datetime.now()
         self.nextcalc = self.endheat
         self.lastcalc = self.endheat
