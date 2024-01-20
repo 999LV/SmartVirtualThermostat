@@ -109,7 +109,7 @@ class BasePlugin:
         self.loglevel = None
         self.intemperror = False
         self.versionsupported = False
-        # self.systemTempUnit = "C"  # Default to Celsius
+        self.systemTempUnit = "C"  # Default to Celsius
         return
 
 
@@ -148,7 +148,6 @@ class BasePlugin:
             Domoticz.Debug("System temperature unit is: {}".format(self.systemTempUnit))
         else:
             Domoticz.Error("Failed to determine system temperature unit, defaulting to Celsius")
-            self.systemTempUnit = "C"  # Default to Celsius if API call fails
             
         # create the child devices if these do not exist yet
         devicecreated = []
