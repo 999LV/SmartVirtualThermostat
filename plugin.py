@@ -15,7 +15,7 @@ Version: 0.4.14 (November 13, 2023) - see history.txt for versions history
         rather then more conventional hysteresis methods, so as to achieve a greater comfort.<br/>
         It is a port to Domoticz of the original Vera plugin from Antor.<br/>
         <h3>Set-up and Configuration</h3>
-        See domoticz wiki above.<br/> 
+        See domoticz wiki above.<br/>
     </description>
     <params>
         <param field="Address" label="Domoticz IP Address" width="200px" required="true" default="localhost"/>
@@ -27,10 +27,10 @@ Version: 0.4.14 (November 13, 2023) - see history.txt for versions history
         <param field="Mode3" label="Heating Switches (csv list of idx)" width="100px" required="true" default="0"/>
         <param field="Mode4" label="Apply minimum heating per cycle" width="200px">
             <options>
-		<option label="only when heating required" value="Normal"  default="true" />
+        <option label="only when heating required" value="Normal"  default="true" />
                 <option label="always" value="Forced"/>
             </options>
-        </param> 
+        </param>
         <param field="Mode5" label="Calc. cycle, Min. Heating time /cycle, Pause On delay, Pause Off delay, Forced mode duration (all in minutes), Delta max (°C)" width="200px" required="true" default="30,0,2,1,60,0.2"/>
         <param field="Mode6" label="Logging Level" width="200px">
             <options>
@@ -109,6 +109,7 @@ class BasePlugin:
         self.loglevel = None
         self.intemperror = False
         self.versionsupported = False
+        # self.systemTempUnit = "C"  # Default to Celsius
         return
 
 
@@ -138,6 +139,17 @@ class BasePlugin:
             Domoticz.Error("Minimum domoticz version is 2023.2")
             return
 
+        # Fetch the system settings from the API to determine temperature unit
+        settingsAPI = DomoticzAPI("type=command&param=getsettings")
+        if settingsAPI and "status" in settingsAPI and settingsAPI["status"] == "OK" and "TempUnit" in settingsAPI:
+            TempUnit = settingsAPI["TempUnit"]
+            # Correctly set the system temperature unit based on the TempUnit value
+            self.systemTempUnit = "F" if TempUnit == 1 else "C"
+            Domoticz.Debug("System temperature unit is: {}".format(self.systemTempUnit))
+        else:
+            Domoticz.Error("Failed to determine system temperature unit, defaulting to Celsius")
+            self.systemTempUnit = "C"  # Default to Celsius if API call fails
+            
         # create the child devices if these do not exist yet
         devicecreated = []
         if 1 not in Devices:
@@ -180,7 +192,7 @@ class BasePlugin:
         self.WriteLog("Outside Temperature sensors = {}".format(self.OutTempSensors), "Verbose")
         self.Heaters = parseCSV(Parameters["Mode3"])
         self.WriteLog("Heaters = {}".format(self.Heaters), "Verbose")
-        
+
         # build dict of status of all temp sensors to be used when handling timeouts
         for sensor in itertools.chain(self.InTempSensors, self.OutTempSensors):
             self.ActiveSensors[sensor] = True
@@ -244,7 +256,22 @@ class BasePlugin:
             nvalue = 1 if Level > 0 else 0
             svalue = str(Level)
 
-        Devices[Unit].Update(nValue=nvalue, sValue=svalue)
+        # Check if the command is to update a setpoint
+        if Unit in (4, 5):  # Assuming devices 4 and 5 are the setpoints for Normal and Economy modes
+            try:
+                # Convert Level to float to handle numeric operations
+                setpoint = float(Level)
+            except ValueError:
+                Domoticz.Error("Invalid setpoint value: {}".format(Level))
+                return
+
+            # Check if the setpoint is likely in Fahrenheit and convert to Celsius if necessary
+            if self.systemTempUnit == "F":
+                setpoint = (setpoint - 32) * (5.0 / 9.0)
+                Domoticz.Log("Setpoint is assumed to be in Fahrenheit, converting to Celsius: {}".format(setpoint))
+
+            # Update the device with the new (converted) setpoint
+            Devices[Unit].Update(nValue=0, sValue=str(setpoint))
 
         if Unit in (1, 2, 4, 5): # force recalculation if control or mode or a setpoint changed
             self.nextcalc = datetime.now()
