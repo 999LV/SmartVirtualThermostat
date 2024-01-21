@@ -15,7 +15,7 @@ Version: 0.4.14 (November 13, 2023) - see history.txt for versions history
         rather then more conventional hysteresis methods, so as to achieve a greater comfort.<br/>
         It is a port to Domoticz of the original Vera plugin from Antor.<br/>
         <h3>Set-up and Configuration</h3>
-        See domoticz wiki above.<br/>
+        See domoticz wiki above.<br/> 
     </description>
     <params>
         <param field="Address" label="Domoticz IP Address" width="200px" required="true" default="localhost"/>
@@ -30,7 +30,7 @@ Version: 0.4.14 (November 13, 2023) - see history.txt for versions history
         <option label="only when heating required" value="Normal"  default="true" />
                 <option label="always" value="Forced"/>
             </options>
-        </param>
+        </param> 
         <param field="Mode5" label="Calc. cycle, Min. Heating time /cycle, Pause On delay, Pause Off delay, Forced mode duration (all in minutes), Delta max (°C)" width="200px" required="true" default="30,0,2,1,60,0.2"/>
         <param field="Mode6" label="Logging Level" width="200px">
             <options>
@@ -109,8 +109,13 @@ class BasePlugin:
         self.loglevel = None
         self.intemperror = False
         self.versionsupported = False
-        self.systemTempUnit = "C"  # Default to Celsius
         return
+
+    @staticmethod
+    def fahrenheitToCelsius(fahrenheit):
+        """Convert Fahrenheit to Celsius and round to the first decimal point."""
+        celsius = (fahrenheit - 32) * 5.0 / 9.0
+        return round(celsius, 1)
 
 
     def onStart(self):
@@ -142,13 +147,12 @@ class BasePlugin:
         # Fetch the system settings from the API to determine temperature unit
         settingsAPI = DomoticzAPI("type=command&param=getsettings")
         if settingsAPI and "status" in settingsAPI and settingsAPI["status"] == "OK" and "TempUnit" in settingsAPI:
-            TempUnit = settingsAPI["TempUnit"]
-            # Correctly set the system temperature unit based on the TempUnit value
-            self.systemTempUnit = "F" if TempUnit == 1 else "C"
+            self.systemTempUnit = "F" if settingsAPI["TempUnit"] == 1 else "C"
             Domoticz.Debug("System temperature unit is: {}".format(self.systemTempUnit))
         else:
+            self.systemTempUnit = "C"  # Default to Celsius
             Domoticz.Error("Failed to determine system temperature unit, defaulting to Celsius")
-            
+
         # create the child devices if these do not exist yet
         devicecreated = []
         if 1 not in Devices:
@@ -191,7 +195,7 @@ class BasePlugin:
         self.WriteLog("Outside Temperature sensors = {}".format(self.OutTempSensors), "Verbose")
         self.Heaters = parseCSV(Parameters["Mode3"])
         self.WriteLog("Heaters = {}".format(self.Heaters), "Verbose")
-
+        
         # build dict of status of all temp sensors to be used when handling timeouts
         for sensor in itertools.chain(self.InTempSensors, self.OutTempSensors):
             self.ActiveSensors[sensor] = True
@@ -255,23 +259,31 @@ class BasePlugin:
             nvalue = 1 if Level > 0 else 0
             svalue = str(Level)
 
-        # Check if the command is to update a setpoint
-        if Unit in (4, 5):  # Assuming devices 4 and 5 are the setpoints for Normal and Economy modes
-            try:
-                # Convert Level to float to handle numeric operations
-                setpoint = float(Level)
-            except ValueError:
-                Domoticz.Error("Invalid setpoint value: {}".format(Level))
-                return
+            # Check if the unit is a setpoint device
+            if Unit in (4, 5):
+                # Fetch the system settings from the API to determine temperature unit
+                settingsAPI = DomoticzAPI("type=command&param=getsettings")
+                if settingsAPI and "status" in settingsAPI and settingsAPI["status"] == "OK" and "TempUnit" in settingsAPI:
+                    currentSystemTempUnit = "F" if settingsAPI["TempUnit"] == 1 else "C"
+                    Domoticz.Debug("Current system temperature unit is: {}".format(currentSystemTempUnit))
+                else:
+                    currentSystemTempUnit = "C"  # Default to Celsius
+                    Domoticz.Error("Failed to determine current system temperature unit, defaulting to Celsius")
 
-            # Check if the setpoint is likely in Fahrenheit and convert to Celsius if necessary
-            if self.systemTempUnit == "F":
-                # Convert to Celsius and round to two decimal places
-                setpoint = round((setpoint - 32) * (5.0 / 9.0), 1)
-                Domoticz.Log("Setpoint is assumed to be in Fahrenheit, converting to Celsius: {}".format(setpoint))
+                # Only convert level from Fahrenheit to Celsius if system is set to Fahrenheit
+                if currentSystemTempUnit == "F":
+                    # Convert level from Fahrenheit to Celsius
+                    Level = self.fahrenheitToCelsius(Level)
+                    # Update svalue with the converted and clamped level
+                    svalue = str(Level)
+                else:
+                    # System is set to Celsius, no conversion needed
+                    sValue = str(Level)
 
-            # Update the device with the new (converted) setpoint
-            Devices[Unit].Update(nValue=0, sValue=str(setpoint))
+                # Update the system temperature unit to the current setting
+                self.systemTempUnit = currentSystemTempUnit
+
+        Devices[Unit].Update(nValue=nvalue, sValue=svalue)
 
         if Unit in (1, 2, 4, 5): # force recalculation if control or mode or a setpoint changed
             self.nextcalc = datetime.now()
@@ -515,22 +527,27 @@ class BasePlugin:
         if devicesAPI:
             for device in devicesAPI["result"]:  # parse the devices for temperature sensors
                 idx = int(device["idx"])
-                if idx in self.InTempSensors or idx in self.OutTempSensors:
+                if idx in self.InTempSensors:
                     if "Temp" in device:
-                        temp = device["Temp"]
-                        Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], temp))
-                        # Convert temperature from Fahrenheit to Celsius if systemTempUnit is "F"
-                        if self.systemTempUnit == "F":
-                            temp = round((temp - 32) * (5.0 / 9.0), 1)
-                            Domoticz.Debug("Converted temperature to Celsius: {}".format(temp))
+                        Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
                         # check temp sensor is not timed out
                         if not self.SensorTimedOut(idx, device["Name"], device["LastUpdate"]):
-                            if idx in self.InTempSensors:
-                                listintemps.append(temp)
-                            elif idx in self.OutTempSensors:
-                                listouttemps.append(temp)
+                            listintemps.append(device["Temp"])
                     else:
                         Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
+                elif idx in self.OutTempSensors:
+                    if "Temp" in device:
+                        Domoticz.Debug("device: {}-{} = {}".format(device["idx"], device["Name"], device["Temp"]))
+                        # check temp sensor is not timed out
+                        if not self.SensorTimedOut(idx, device["Name"], device["LastUpdate"]):
+                            listouttemps.append(device["Temp"])
+                    else:
+                        Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
+
+        # Convert temperatures from Fahrenheit to Celsius if needed
+        if self.systemTempUnit == "F":
+            listintemps = [self.fahrenheitToCelsius(temp) for temp in listintemps]
+            listouttemps = [self.fahrenheitToCelsius(temp) for temp in listouttemps]
 
         # calculate the average inside temperature
         nbtemps = len(listintemps)
@@ -565,7 +582,8 @@ class BasePlugin:
         Domoticz.Debug("Inside Temperature = {}".format(self.intemp))
         Domoticz.Debug("Outside Temperature = {}".format(self.outtemp))
         return noerror
-        
+
+
     def getUserVar(self):
 
         variables = DomoticzAPI("type=command&param=getuservariables")
