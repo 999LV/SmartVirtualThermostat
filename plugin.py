@@ -27,7 +27,7 @@ Version: 0.4.14 (November 13, 2023) - see history.txt for versions history
         <param field="Mode3" label="Heating Switches (csv list of idx)" width="100px" required="true" default="0"/>
         <param field="Mode4" label="Apply minimum heating per cycle" width="200px">
             <options>
-		<option label="only when heating required" value="Normal"  default="true" />
+        <option label="only when heating required" value="Normal"  default="true" />
                 <option label="always" value="Forced"/>
             </options>
         </param> 
@@ -111,6 +111,12 @@ class BasePlugin:
         self.versionsupported = False
         return
 
+    @staticmethod
+    def fahrenheitToCelsius(fahrenheit):
+        """Convert Fahrenheit to Celsius and round to the first decimal point."""
+        celsius = (fahrenheit - 32) * 5.0 / 9.0
+        return round(celsius, 1)
+
 
     def onStart(self):
 
@@ -137,6 +143,15 @@ class BasePlugin:
         else:
             Domoticz.Error("Minimum domoticz version is 2023.2")
             return
+
+        # Fetch the system settings from the API to determine temperature unit
+        settingsAPI = DomoticzAPI("type=command&param=getsettings")
+        if settingsAPI and "status" in settingsAPI and settingsAPI["status"] == "OK" and "TempUnit" in settingsAPI:
+            self.systemTempUnit = "F" if settingsAPI["TempUnit"] == 1 else "C"
+            Domoticz.Debug("System temperature unit is: {}".format(self.systemTempUnit))
+        else:
+            self.systemTempUnit = "C"  # Default to Celsius
+            Domoticz.Error("Failed to determine system temperature unit, defaulting to Celsius")
 
         # create the child devices if these do not exist yet
         devicecreated = []
@@ -243,6 +258,30 @@ class BasePlugin:
         else:
             nvalue = 1 if Level > 0 else 0
             svalue = str(Level)
+
+            # Check if the unit is a setpoint device
+            if Unit in (4, 5):
+                # Fetch the system settings from the API to determine temperature unit
+                settingsAPI = DomoticzAPI("type=command&param=getsettings")
+                if settingsAPI and "status" in settingsAPI and settingsAPI["status"] == "OK" and "TempUnit" in settingsAPI:
+                    currentSystemTempUnit = "F" if settingsAPI["TempUnit"] == 1 else "C"
+                    Domoticz.Debug("Current system temperature unit is: {}".format(currentSystemTempUnit))
+                else:
+                    currentSystemTempUnit = "C"  # Default to Celsius
+                    Domoticz.Error("Failed to determine current system temperature unit, defaulting to Celsius")
+
+                # Only convert level from Fahrenheit to Celsius if system is set to Fahrenheit
+                if currentSystemTempUnit == "F":
+                    # Convert level from Fahrenheit to Celsius
+                    Level = self.fahrenheitToCelsius(Level)
+                    # Update svalue with the converted and clamped level
+                    svalue = str(Level)
+                else:
+                    # System is set to Celsius, no conversion needed
+                    sValue = str(Level)
+
+                # Update the system temperature unit to the current setting
+                self.systemTempUnit = currentSystemTempUnit
 
         Devices[Unit].Update(nValue=nvalue, sValue=svalue)
 
@@ -504,6 +543,11 @@ class BasePlugin:
                             listouttemps.append(device["Temp"])
                     else:
                         Domoticz.Error("device: {}-{} is not a Temperature sensor".format(device["idx"], device["Name"]))
+
+        # Convert temperatures from Fahrenheit to Celsius if needed
+        if self.systemTempUnit == "F":
+            listintemps = [self.fahrenheitToCelsius(temp) for temp in listintemps]
+            listouttemps = [self.fahrenheitToCelsius(temp) for temp in listouttemps]
 
         # calculate the average inside temperature
         nbtemps = len(listintemps)
